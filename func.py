@@ -27,8 +27,12 @@ def download_audio(url: str) -> tuple[str, str, str, dict[str, str]]:
     channel_title = yt.author
     chosen_stream = yt.streams.filter(only_audio=True).first()
 
+    # Avoid Filename Limit Error
+    if len(valid) > 250:
+        valid = valid[:250]
+
     file_path = f"{cur_dir}/{valid}.mp3"
-    thumbnail_path = f"{cur_dir}/cover.jpg"
+    thumbnail_path = f"{cur_dir}/{valid}_cover.jpg"
 
     data={"artist":channel_title, "title":audio_title}
 
