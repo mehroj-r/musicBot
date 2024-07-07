@@ -1,0 +1,4 @@
+/.venv/
+/.idea/
+/credentials.py
+/session_name.session
