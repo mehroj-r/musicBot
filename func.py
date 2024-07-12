@@ -16,7 +16,7 @@ def valid_filename(filename: str) -> str:
 
 def download_audio(url: str) -> tuple[str, str, str, dict[str, str]]:
     # Extract video info without downloading
-    with YoutubeDL() as ydl:
+    with YoutubeDL({'quiet': True}) as ydl:
         info_dict = ydl.extract_info(url, download=False)
         audio_title = info_dict['title']
         uploader = info_dict['uploader']
