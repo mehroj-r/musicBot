@@ -2,3 +2,4 @@
 /.idea/
 /credentials.py
 /session_name.session
+.env
