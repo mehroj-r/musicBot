@@ -22,29 +22,29 @@ A professional Telegram bot that downloads audio from YouTube videos and uploads
 ## Installation
 1. **Clone the repository:**
    ```bash
-git clone https://github.com/mehroj-r/musicBot.git
-cd musicBot
-```
+    git clone https://github.com/mehroj-r/musicBot.git
+    cd musicBot
+    ```
 2. **Install dependencies:**
    ```bash
-uv sync
-```
+    uv sync
+    ```
    Or, if you use [Poetry](https://python-poetry.org/):
    ```bash
-poetry install
-```
+    poetry install
+    ```
 
 ---
 ## Configuration
 1. **Create a `.env` file in the project root with the following content:**
    ```env
-BOT_API_TOKEN=<your-telegram-bot-token>
-API_ID=<your-api-id>
-API_HASH=<your-api-hash>
-PHONE_NUMBER=<your-phone-number>
-CHANNEL_URL=<your-channel-url>
-CHANNEL_ID=<your-channel-id>
-```
+    BOT_API_TOKEN=<your-telegram-bot-token>
+    API_ID=<your-api-id>
+    API_HASH=<your-api-hash>
+    PHONE_NUMBER=<your-phone-number>
+    CHANNEL_URL=<your-channel-url>
+    CHANNEL_ID=<your-channel-id>
+    ```
    - You can obtain the Bot token from [@BotFather](https://t.me/BotFather).
    - API ID and API Hash are available at [my.telegram.org](https://my.telegram.org).
    - `CHANNEL_URL` is the invite or public link to your channel.
