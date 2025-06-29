@@ -3,3 +3,6 @@
 /credentials.py
 /session_name.session
 .env
+/src/cookies.txt
+/tmp/
+/logs/

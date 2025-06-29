@@ -4,14 +4,21 @@ import pydub
 import requests
 import yt_dlp
 
+from config import settings
 from config.logging_config import logger
 from utils.dlp_utils import valid_filename
 
 
 class DLPService:
+    cookies_file = settings.COOKIES_FILE
+    extra_kwargs = {}
 
     @classmethod
     def download_audio(cls, url: str) -> tuple[str, str, str, dict[str, str]]:
+
+        if cls.cookies_file and os.path.exists(cls.cookies_file):
+            cls.extra_kwargs['cookiefile'] = cls.cookies_file
+            logger.info(f" - Using cookies file: {cls.cookies_file}")
 
         # Use yt_dlp Python API to extract video info and download audio
         logger.info(" - Extracting audio details ...")
@@ -25,7 +32,7 @@ class DLPService:
         filename = valid_filename(audio_title)[:250]
 
         # Prepare paths
-        download_dir = os.getcwd()+"/tmp"
+        download_dir = os.getcwd() + "/tmp"
         file_path = f"{download_dir}/{filename}.mp3"
         thumbnail_path = f"{download_dir}/thumbnail.jpg"
 
@@ -57,7 +64,9 @@ class DLPService:
             'skip_download': True,
             'quiet': True,
             'extract_flat': 'in_playlist',
+            **cls.extra_kwargs
         }
+
         try:
             with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -93,8 +102,10 @@ class DLPService:
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
-            }]
+            }],
+            **cls.extra_kwargs
         }
+
         with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
             ydl.download([url])
 
