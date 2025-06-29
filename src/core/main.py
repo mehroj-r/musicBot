@@ -1,6 +1,6 @@
 import asyncio
 
-from src.core.bot import init_bot
+from core.bot import init_bot
 from config.logging_config import logger
 
 async def main() -> None:

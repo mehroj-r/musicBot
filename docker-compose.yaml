@@ -1,0 +1,6 @@
+services:
+  music-bot:
+    build: .
+    container_name: music-bot
+    restart: always
+    env_file: .env
