@@ -21,12 +21,12 @@ bot = Bot(
 async def init_bot():
     await set_descripton(
         bot,
-        "Lumi Service Bot - Your service bot in Telegram. \n\n "
-        "I'm here to help you stay in touch with your bookings. \n\n "
+        "Music Assistant Bot in Telegram. \n\n "
+        "I'm here to help you save music directly from Youtube to your private Telgram channel. \n\n "
         "Click /start to begin!")
     await set_short_description(
         bot,
-        "Lumi Service Bot - Your service bot in Telegram")
+            "Music Assistant Bot - For downloading music from YouTube to Telegram.")
     await set_commands(bot, [
         BotCommand(command="/start", description="Start the bot"),
         BotCommand(command="/help", description="Get help"),
