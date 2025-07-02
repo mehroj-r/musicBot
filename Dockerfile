@@ -1,4 +1,4 @@
-ARG PYTHON_VERSION=3.12.9
+ARG PYTHON_VERSION=3.13.3
 
 # ---- Stage 1: Builder ----
 FROM python:${PYTHON_VERSION}-alpine AS builder
