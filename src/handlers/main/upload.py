@@ -25,7 +25,7 @@ async def echo_message(message: types.Message) -> None:
 
     # Download the audio file and get the file location, thumbnail location, caption, and metadata
     try:
-        file_location, thumbnail_location, file_caption, data = DLPService.download_audio(url=message.text)
+        file_location, thumbnail_location, file_caption, data = await DLPService.download_audio(url=message.text)
     except Exception as e:
         logger.error(f"An error occurred while downloading audio: {e}")
         await downloading_sent.edit_text(
