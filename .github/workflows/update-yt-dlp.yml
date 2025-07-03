@@ -23,6 +23,13 @@ jobs:
       - name: Get current yt-dlp version
         id: current_version
         run: |
+          
+          # Function to normalize version
+          normalize_version() {
+            local version=$1
+            echo "$version" | awk -F. '{printf "%04d.%02d.%02d\n", $1, $2, $3}'
+          }
+          
           # Parse yt-dlp version from uv.lock file
           if [ -f "uv.lock" ]; then
             # Look for the yt-dlp package block and get the version
@@ -32,12 +39,23 @@ jobs:
             uv sync --quiet || true
             CURRENT=$(uv run yt-dlp --version 2>/dev/null || echo "not installed")
           fi
+          
+          # Normalize the version for consistent comparison
+          CURRENT=$(normalize_version "$CURRENT")
+          
           echo "version=$CURRENT" >> $GITHUB_OUTPUT
           echo "Current yt-dlp version: $CURRENT"
 
       - name: Update dependencies with uv
         id: update_deps
         run: |
+          
+          # Function to normalize version
+          normalize_version() {
+            local version=$1
+            echo "$version" | awk -F. '{printf "%04d.%02d.%02d\n", $1, $2, $3}'
+          }
+          
           echo "Running uv lock --upgrade..."
           uv lock --upgrade
           
@@ -46,6 +64,10 @@ jobs:
           
           # Get new version after update
           NEW_VERSION=$(uv run yt-dlp --version 2>/dev/null || echo "failed to get version")
+          
+          # Normalize the version for consistent comparison
+          NEW_VERSION=$(normalize_version "$NEW_VERSION")
+          
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "New yt-dlp version: $NEW_VERSION"
 
@@ -54,12 +76,7 @@ jobs:
         run: |
           OLD_VERSION="${{ steps.current_version.outputs.version }}"
           NEW_VERSION="${{ steps.update_deps.outputs.new_version }}"
-          
-          # Function to normalize version for comparison
-          normalize_version() {
-            local version=$1
-            echo "$version" | awk -F. '{printf "%04d.%02d.%02d\n", $1, $2, $3}'
-          }
+  
           
           if [ "$NEW_VERSION" = "failed to get version" ]; then
             echo "update_available=false" >> $GITHUB_OUTPUT
@@ -67,11 +84,7 @@ jobs:
           elif [ "$OLD_VERSION" = "unknown" ] || [ "$OLD_VERSION" = "not installed" ]; then
             echo "update_available=true" >> $GITHUB_OUTPUT
             echo "✅ yt-dlp newly installed: $NEW_VERSION"
-          else
-            # Normalize both versions for comparison
-            $OLD_VERSION=$(normalize_version "$OLD_VERSION")
-            $NEW_VERSION=$(normalize_version "$NEW_VERSION")
-            
+          else  
             if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
               echo "update_available=true" >> $GITHUB_OUTPUT
               echo "✅ Update detected: $OLD_VERSION → $NEW_VERSION"
@@ -110,10 +123,18 @@ jobs:
       - name: Deployment Status
         run: |
           if [ "${{ steps.check_changes.outputs.lock_changed }}" == "true" ]; then
-            echo "🚀 Lock file updated and pushed to master - deploy.yml will handle deployment automatically"
+            echo "🚀 Lock file updated and pushed to master - deploy.yml will handle deployment."
           else
             echo "⏭️ No changes to commit - deployment not needed"
           fi
+
+      - name: Trigger Deploy Workflow
+        if: steps.check_changes.outputs.lock_changed == 'true'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.PAT }}
+          repository: ${{ github.repository }}
+          event-type: trigger-deploy
 
       - name: Create detailed summary
         run: |
