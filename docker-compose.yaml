@@ -1,6 +1,29 @@
 services:
+  mongo-db:
+    image: mongo:latest
+    restart: unless-stopped
+    ports:
+      - "${MONGO_PORT}:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - app-network
+    env_file: .env
+
   music-bot:
     build: .
     container_name: music-bot
+    depends_on:
+      - mongo-db
     restart: always
+    networks:
+      - app-network
     env_file: .env
+
+volumes:
+    mongo_data:
+        driver: local
+
+networks:
+  app-network:
+    driver: bridge
