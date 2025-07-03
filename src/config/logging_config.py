@@ -1,4 +1,5 @@
 import logging.config
+import os
 
 LOGGING_CONFIG = {
     "version": 1,
@@ -19,13 +20,13 @@ LOGGING_CONFIG = {
         },
         "file": {
             "class": "logging.FileHandler",
-            "filename": "app.log",
+            "filename": "logs/app.log",
             "formatter": "detailed",
             "level": "INFO",
         },
         "error_file": {
             "class": "logging.FileHandler",
-            "filename": "errors.log",
+            "filename": "logs/errors.log",
             "formatter": "detailed",
             "level": "ERROR",
         },
@@ -36,6 +37,19 @@ LOGGING_CONFIG = {
     },
 }
 
+# Make sure the logs directory exists
+if not os.path.exists(os.getcwd()+"/logs"):
+    os.makedirs("logs")
+
 # Configure the logging system
 logging.config.dictConfig(LOGGING_CONFIG)
+
+# Suppress pymongo logging to avoid cluttering the logs
+logging.getLogger("pymongo").setLevel(logging.WARNING)
+logging.getLogger("pymongo.server").setLevel(logging.WARNING)
+logging.getLogger("pymongo.monitoring").setLevel(logging.WARNING)
+logging.getLogger("pymongo.pool").setLevel(logging.WARNING)
+logging.getLogger("pymongo.mongo_client").setLevel(logging.WARNING)
+
+# Create a logger for the application
 logger = logging.getLogger(__name__)

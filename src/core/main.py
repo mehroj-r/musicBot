@@ -2,9 +2,12 @@ import asyncio
 
 from core.bot import init_bot
 from config.logging_config import logger
+from core.db import init_db
+
 
 async def main() -> None:
     try:
+        await init_db()
         await init_bot()
     except Exception as e:
         logger.error(f"Fatal error in main process: {e}")

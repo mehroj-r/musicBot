@@ -1,11 +1,28 @@
 from aiogram import types, Router
 from aiogram.filters import CommandStart
 
+from services.auth import AuthService
+from utils.auth_utils import get_or_create_user
+
 router = Router()
 
 @router.message(CommandStart())
 async def start_handler(message: types.Message):
     user = message.from_user
+
+    # Ensure the user is registered
+    registered_user = await get_or_create_user(
+        user_id=user.id,
+        first_name=user.first_name,
+        username=user.username,
+        last_name=user.last_name
+    )
+
+    if not registered_user:
+        await message.reply(
+            "Sorry, I couldn't register you. Please try again later."
+        )
+        return
 
     # Greet the user
     await message.reply(
