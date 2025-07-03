@@ -1,5 +1,6 @@
 import asyncio
 import os
+import uuid
 from typing import Dict, Tuple
 
 import aiohttp
@@ -23,45 +24,47 @@ class DLPService:
             cls.extra_kwargs['cookiefile'] = cls.cookies_file
             logger.info(f"Using cookies file: {cls.cookies_file}")
 
-        # Use yt_dlp Python API to extract video info and download audio
-        logger.info("Extracting audio details ...")
-
-        # Get audio information without downloading for display purposes
-        audio_info = await cls._get_audio_info(url)
-
-        audio_title = audio_info.get('title', 'audio')
-        uploader = audio_info.get('uploader', 'unknown')
-        audio_thumbnail = audio_info.get('thumbnail', None)
-        filename = valid_filename(audio_title)[:250]
+        # Unique filename generation
+        filename = valid_filename(str(uuid.uuid4().hex))
 
         # Prepare paths
         download_dir = os.getcwd() + "/tmp"
         file_path = f"{download_dir}/{filename}.mp3"
-        thumbnail_path = f"{download_dir}/thumbnail.jpg"
+        thumbnail_path = f"{download_dir}/{filename}_thumbnail.jpg"
 
         # Ensure the download directory exists
         if not os.path.exists(download_dir):
             os.makedirs(download_dir)
 
-        # Ensure the audio thumbnail URL is available
-        if not audio_thumbnail:
-            raise ValueError("No thumbnail URL found in audio info.")
-
         # Run thumbnail and audio downloads concurrently
-        logger.info("Starting concurrent downloads ...")
-        download_tasks = [
-            cls._download_thumbnail(thumbnail_url=audio_thumbnail, save_path=thumbnail_path),
+        audio_download_task = asyncio.create_task(
             cls._download_audio_file(url=url, save_path=file_path)
-        ]
+        )
 
-        await asyncio.gather(*download_tasks)
+        audio_info = await cls._get_audio_info(url=url)
+        uploader = audio_info.get('uploader', 'Unknown Artist')
+        audio_title = audio_info.get('title', 'Unknown Title')
+        new_path = f"{download_dir}/{valid_filename(audio_title)}.mp3"
+
+        thumbnail_url = audio_info.get('thumbnail', None)
+        if not thumbnail_url:
+            logger.warning("No thumbnail found, using default placeholder.")
+            thumbnail_url = "https://www.creativefabrica.com/wp-content/uploads/2023/08/21/Audio-Sound-Music-Frequency-Logo-Graphics-77376936-1-1-580x387.jpg"
+
+        await cls._download_thumbnail(thumbnail_url=thumbnail_url, save_path=thumbnail_path)
+
+        # Wait for audio download to complete
+        await audio_download_task
+
+        # Rename file
+        os.rename(file_path, new_path)
 
         # Process audio file after downloads complete
         await cls._process_audio_file(
-            file_path=file_path,
+            file_path=new_path,
             thumbnail_path=thumbnail_path,
             artist=uploader,
-            title=audio_title
+            title=audio_title,
         )
 
         data = {
@@ -69,7 +72,7 @@ class DLPService:
             "title": audio_title
         }
 
-        return file_path, thumbnail_path, audio_title, data
+        return new_path, thumbnail_path, audio_title, data
 
     @classmethod
     async def _get_audio_info(cls, url: str) -> Dict[str, str]:
@@ -84,6 +87,9 @@ class DLPService:
         }
 
         def extract_info():
+
+            logger.info("Extracting audio details ...")
+
             try:
                 with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
                     return ydl.extract_info(url, download=False)
@@ -93,6 +99,7 @@ class DLPService:
 
         # Run in thread pool to avoid blocking
         info = await asyncio.to_thread(extract_info)
+        logger.info("Audio details extracted successfully")
         return info
 
     @classmethod
@@ -100,7 +107,7 @@ class DLPService:
         """
         Download the thumbnail image from the given URL using async HTTP client.
         """
-        logger.info(" - Downloading thumbnail ...")
+        logger.info("Downloading thumbnail ...")
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(thumbnail_url, allow_redirects=True) as response:
@@ -113,10 +120,10 @@ class DLPService:
                         save_path,
                         content
                     )
-            logger.info(f"Thumbnail downloaded successfully to {save_path}")
         except Exception as e:
             logger.error(f"Failed to download thumbnail: {str(e)}")
             raise
+        logger.info(f"Thumbnail successfully downloaded to {save_path}")
 
     @staticmethod
     def _write_file(file_path: str, content: bytes) -> None:
@@ -129,23 +136,30 @@ class DLPService:
         """
         Download audio file using yt_dlp in thread pool.
         """
-        logger.info(" - Downloading audio ...")
+
+        ydl_opts_audio = {
+            'format': 'bestaudio/best',
+            'quiet': True,
+            'outtmpl': save_path.rstrip('.mp3'),
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            **cls.extra_kwargs
+        }
 
         def download_audio():
-            ydl_opts_audio = {
-                'format': 'bestaudio/best',
-                'quiet': True,
-                'outtmpl': save_path.rstrip('.mp3'),
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }],
-                **cls.extra_kwargs
-            }
+            logger.info("Downloading audio ...")
 
-            with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
-                ydl.download([url])
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
+                    ydl.download([url])
+            except Exception as e:
+                logger.error(f"Failed to download audio: {str(e)}")
+                raise
+
+            logger.info(f"Audio downloaded successfully to {save_path}")
 
         # Run in thread pool to avoid blocking
         await asyncio.to_thread(download_audio)
@@ -156,7 +170,7 @@ class DLPService:
         Add metadata and cover art to audio file without re-encoding.
         Uses mutagen for direct ID3 tag manipulation.
         """
-        logger.info(" - Adding metadata to audio file ...")
+        logger.info("Adding metadata to audio file ...")
 
         def add_metadata():
             try:
@@ -176,9 +190,9 @@ class DLPService:
                     with open(thumbnail_path, 'rb') as albumart:
                         audio_file.tags.add(
                             APIC(
-                                encoding=3,  # UTF-8
-                                mime='image/jpeg',  # MIME type
-                                type=3,  # Cover (front)
+                                encoding=3,                # UTF-8
+                                mime='image/jpeg',         # MIME type
+                                type=3,                    # Cover (front)
                                 desc='Cover',
                                 data=albumart.read()
                             )
