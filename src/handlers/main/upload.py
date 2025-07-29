@@ -2,14 +2,14 @@ import os
 
 from aiogram import types, Router, F, Bot
 
-from config.logging_config import logger
+from config.logging_conf import logger
 from services.yt_dlp import DLPService
 from utils.app_utils import upload_to_telegram, send_photo, upload_big_file
 
 router = Router()
 
 @router.message(F.text.startswith("https://"))
-async def echo_message(message: types.Message) -> None:
+async def download_audio(message: types.Message) -> None:
 
     # Check if the message text is a valid YouTube URL
     if not (

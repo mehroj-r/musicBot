@@ -1,7 +1,7 @@
 import asyncio
 
 from core.bot import init_bot
-from config.logging_config import logger
+from config.logging_conf import logger
 from core.db import init_db
 
 

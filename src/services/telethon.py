@@ -6,7 +6,7 @@ from telethon.tl.functions.messages import SendMediaRequest
 from telethon.tl.types import InputMediaUploadedDocument
 from telethon.utils import get_input_peer
 
-from config.logging_config import logger
+from config.logging_conf import logger
 from config.settings import API_ID, API_HASH, PHONE_NUMBER, CHANNEL_URL
 
 class TelethonService:

@@ -9,7 +9,7 @@ from mutagen.id3 import TIT2, TPE1, APIC
 from mutagen.mp3 import MP3
 
 from config import settings
-from config.logging_config import logger
+from config.logging_conf import logger
 from utils.dlp_utils import valid_filename
 
 

@@ -1,21 +1,15 @@
-from pymongo import AsyncMongoClient
-from pymongo.server_api import ServerApi
-
 from config import settings
+from services.mongo import MongoService
 
-client = AsyncMongoClient(
-    settings.MONGO_URI,
-    server_api=ServerApi('1')
+_client = MongoService(
+    uri=settings.MONGO_URI,
+    db_name=settings.MONGO_DB
 )
+
+db = _client.db
 
 async def init_db():
     """
     Initialize the database connection.
     """
-    await client.admin.command('ping')
-
-def get_db():
-    """
-    Get the database instance.
-    """
-    return getattr(client, settings.MONGO_DB)
+    await _client.init_db()

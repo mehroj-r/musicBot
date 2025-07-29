@@ -1,9 +1,13 @@
+import datetime
 import os
 
+import pytz
 from aiogram.types import FSInputFile
 
+from config import settings
 from config.settings import CHANNEL_ID
-from config.logging_config import logger
+from config.logging_conf import logger
+from db.models import User
 from services.telethon import TelethonService
 
 
@@ -31,3 +35,8 @@ async def upload_to_telegram(bot, file_path, thumbnail_path, file_caption):
 
 async def upload_big_file(file_path: str, cover_image_path: str, data: dict[str, str]):
     await TelethonService.upload_files(file_path, cover_image_path, data)
+
+
+def is_new_user(user: User) -> bool:
+    diff = datetime.datetime.now(pytz.timezone(settings.TIMEZONE)) - user.created_at
+    return diff.days == 0 and diff.seconds < 60

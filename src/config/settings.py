@@ -18,3 +18,4 @@ MONGO_DB = os.getenv("MONGO_DB")
 
 # Miscellaneous
 COOKIES_FILE = os.getenv("COOKIE_FILE")
+TIMEZONE = os.getenv("TIMEZONE", "Asia/Tashkent")
