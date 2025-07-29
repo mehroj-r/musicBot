@@ -62,4 +62,4 @@ ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app/src:$PATH"
 
 # Run the application
-CMD ["python", "src/core/main.py"]
+CMD ["python", "-m", "core.main"]
