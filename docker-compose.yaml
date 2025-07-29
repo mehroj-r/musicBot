@@ -1,6 +1,7 @@
 services:
   mongo-db:
     image: mongo:latest
+    container_name: music-bot-db-prod
     restart: unless-stopped
     ports:
       - "${MONGO_PORT}:27017"
@@ -12,13 +13,24 @@ services:
 
   music-bot:
     build: .
-    container_name: music-bot
+    container_name: music-bot-prod
     depends_on:
       - mongo-db
     restart: always
     networks:
       - app-network
     env_file: .env
+
+  nginx:
+    container_name: music-bot-nginx-prod
+    build: nginx
+    ports:
+      - "127.0.0.1:1050:1050"
+    depends_on:
+      - music-bot
+    networks:
+      - app-network
+    restart: unless-stopped
 
 volumes:
     mongo_data:
