@@ -25,7 +25,7 @@ services:
     container_name: music-bot-nginx-prod
     build: nginx
     ports:
-      - "127.0.0.1:1050:1050"
+      - "127.0.0.1:1051:1050"
     depends_on:
       - music-bot
     networks:
