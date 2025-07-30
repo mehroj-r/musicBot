@@ -12,12 +12,15 @@ router = Router()
 async def download_audio(message: types.Message) -> None:
 
     # Check if the message text is a valid YouTube URL
-    if not (
+    if (
             message.text.startswith("https://www.youtube.com/watch?")
             or message.text.startswith("https://youtu.be/")
             or message.text.startswith("https://youtube.com/watch?")
     ):
+        download_service = DLPService()
+    else:
         await message.reply("Invalid URL")
+        return None
 
 
     # Send a message indicating that the download is in progress
@@ -25,13 +28,15 @@ async def download_audio(message: types.Message) -> None:
 
     # Download the audio file and get the file location, thumbnail location, caption, and metadata
     try:
-        file_location, thumbnail_location, file_caption, data = await DLPService.download_audio(url=message.text)
+        audio_data = await download_service.download(url=message.text)
     except Exception as e:
         logger.error(f"An error occurred while downloading audio: {e}")
         await downloading_sent.edit_text(
             text=f"An error occured"
         )
         return None
+
+    file_location, thumbnail_location, file_caption, data = audio_data.file_path, audio_data.thumbnail_path, audio_data.title, {"artist": audio_data.artist, "title": audio_data.title}
 
     # After downloading is done, update the message to indicate that the download is complete
     await downloading_sent.edit_text(
