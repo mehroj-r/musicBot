@@ -1,4 +1,4 @@
-import datetime
+import html
 
 from aiogram import types, Router
 from aiogram.filters import CommandStart
@@ -11,6 +11,7 @@ router = Router()
 @router.message(CommandStart())
 async def start_handler(message: types.Message):
     user = message.from_user
+    first_name = html.escape(user.first_name)
 
     # Ensure the user is registered
     registered_user = await User.get_or_create(
@@ -32,7 +33,7 @@ async def start_handler(message: types.Message):
         # Detailed message for new users
         greeting_message = (
             "<b>🎵 Welcome to the Ultimate Audio Downloader Bot! 🎵</b>\n\n"
-            f"Hi <b>{user.first_name}</b>! 👋\n\n"
+            f"Hi <b>{first_name}</b>! 👋\n\n"
             "I'm here to help you save your favorite tracks and podcasts as high-quality <b>audio files</b> with ease.\n\n"
             "<b>What can I do?</b>\n"
             "• Download audio from platforms like <b>YouTube</b>, <b>Spotify</b>, <b>Yandex Music</b>, <b>SoundCloud</b>, and more!\n"
@@ -48,7 +49,7 @@ async def start_handler(message: types.Message):
     else:
         # Shorter message for returning users
         greeting_message = (
-            f"Welcome back, <b>{user.first_name}</b>! 👋\n"
+            f"Welcome back, <b>{first_name}</b>! 👋\n"
             "Send me a link from YouTube, Spotify, Yandex Music, SoundCloud, or similar platforms, "
             "and I'll send you the audio file right here on Telegram. 🎧\n\n"
             "<i>Ready when you are!</i>"

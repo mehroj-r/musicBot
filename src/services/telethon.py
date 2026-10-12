@@ -8,6 +8,7 @@ from telethon.utils import get_input_peer
 
 from config.logging_conf import logger
 from config.settings import API_ID, API_HASH, PHONE_NUMBER, CHANNEL_URL
+from core.templates import AudioData
 
 class TelethonService:
     """
@@ -16,19 +17,21 @@ class TelethonService:
     client = None
 
     @classmethod
-    async def upload_files(cls, audio_file_path: str, cover_image_path: str, data: dict[str, str]) -> None:
+    async def upload_files(cls, audio: AudioData) -> None:
 
         # Start the Telethon client if not already started
         await cls.start_client()
 
-        # Upload the cover image and audio file, and retrieve the input peer
-        tasks = [cls.client.upload_file(cover_image_path), cls.client.upload_file(audio_file_path), cls.retrieve_input_peer()]
-        cover_img, audio_file, input_peer = await asyncio.gather(*tasks)
+        # Upload the audio file (and cover image, if any), and retrieve the input peer
+        tasks = [cls.client.upload_file(audio.file_path), cls.retrieve_input_peer()]
+        if audio.thumbnail_path:
+            tasks.append(cls.client.upload_file(audio.thumbnail_path))
+        audio_file, input_peer, *cover_img = await asyncio.gather(*tasks)
 
         # Process the uploaded files to determine if they are large or small
-        input_cover = cls._process_input_file(cover_img)
+        input_cover = cls._process_input_file(cover_img[0]) if cover_img else None
         input_audio = cls._process_input_file(audio_file)
-        audio_attributes = cls.get_audio_attributes(data['title'], data['artist'])
+        audio_attributes = cls.get_audio_attributes(audio.title, audio.artist, audio.duration or 0)
 
         # Create the media document
         media = cls._get_media_document(
@@ -38,14 +41,17 @@ class TelethonService:
         )
 
         # Send the media document
-        await cls.send_media(media, data['title'], input_peer)
+        await cls.send_media(media, audio.title, input_peer)
 
 
     @classmethod
     async def start_client(cls):
         """
-        Start the Telethon client.
+        Start the Telethon client once and reuse it for later uploads.
         """
+        if cls.client is not None and cls.client.is_connected():
+            return
+
         cls.client = TelegramClient('session_name', API_ID, API_HASH)
         await cls.client.start(phone=PHONE_NUMBER)
         logger.info("Telethon client started successfully.")
@@ -103,12 +109,12 @@ class TelethonService:
             )
 
     @staticmethod
-    def get_audio_attributes(title: str, artist: str) -> DocumentAttributeAudio:
+    def get_audio_attributes(title: str, artist: str, duration: int) -> DocumentAttributeAudio:
         """
         Create audio attributes for the uploaded file.
         """
         return DocumentAttributeAudio(
-            duration=0,                         # Replace with actual duration if known
+            duration=duration,                  # Duration in seconds
             voice=False,                        # Set to True if the file is a voice message
             title=title,                    # Replace with the actual title
             performer=artist                    # Replace with the actual performer
