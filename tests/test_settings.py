@@ -1,5 +1,12 @@
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import SendMessage
-from aiogram.types import ChatMemberAdministrator, ChatMemberLeft, ChatShared, User
+from aiogram.types import (
+    ChatAdministratorRights,
+    ChatMemberAdministrator,
+    ChatMemberLeft,
+    ChatShared,
+    User,
+)
 
 from musicbot.config import AudioFormat
 from musicbot.db.models import User as DbUser
@@ -32,6 +39,10 @@ def bot_admin(can_post_messages: bool) -> ChatMemberAdministrator:
     )
 
 
+def granted(rights: ChatAdministratorRights | None) -> set[str]:
+    return {name for name, value in (rights.model_dump() if rights else {}).items() if value}
+
+
 async def test_settings_show_defaults(allowed: Harness):
     calls = await allowed.send("/settings")
     message = calls.last("SendMessage")
@@ -56,6 +67,8 @@ async def test_choose_a_channel(allowed: Harness):
     calls = await allowed.press(SettingsCallback(action="channel"))
     picker = calls.last("SendMessage").reply_markup.keyboard[0][0].request_chat
     assert picker.chat_is_channel and picker.bot_administrator_rights.can_post_messages
+    # Telegram answers USER_RIGHTS_MISSING unless the user must hold every right the bot asks for
+    assert granted(picker.bot_administrator_rights) <= granted(picker.user_administrator_rights)
 
     allowed.session.responses["GetChatMember"] = bot_admin(can_post_messages=True)
     shared = ChatShared(request_id=picker.request_id, chat_id=CHANNEL_ID, title="Tunes")
@@ -93,3 +106,14 @@ async def test_send_here_instead(allowed: Harness):
 async def test_cancel_channel_picker(allowed: Harness):
     calls = await allowed.send("✖️ Cancel")
     assert calls.last("SendMessage").reply_markup.remove_keyboard
+
+
+async def test_failing_button_shows_an_alert_instead_of_spinning(allowed: Harness):
+    allowed.session.responses["SendMessage"] = TelegramBadRequest(
+        SendMessage, "USER_RIGHTS_MISSING"
+    )
+
+    calls = await allowed.press(SettingsCallback(action="channel"))
+
+    answer = calls.last("AnswerCallbackQuery")
+    assert answer.show_alert and "Something went wrong" in answer.text
