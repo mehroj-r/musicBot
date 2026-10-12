@@ -16,6 +16,7 @@ from musicbot.handlers import setup_routers
 from musicbot.middlewares import AccessMiddleware, UserMiddleware
 from musicbot.services.downloader import Downloader
 from musicbot.services.uploader import AudioSender, TelethonUploader
+from musicbot.services.yandex import YandexAuth
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ ADMIN_COMMANDS = [
     BotCommand(command="allow", description="Give someone access"),
     BotCommand(command="revoke", description="Take access away"),
     BotCommand(command="users", description="List who has access"),
+    BotCommand(command="yandex", description="Sign in to Yandex Music"),
 ]
 
 
@@ -60,7 +62,11 @@ async def handle_error(event: ErrorEvent) -> None:
 
 
 def build_dispatcher(
-    settings: Settings, database: Database, downloader: Downloader, sender: AudioSender
+    settings: Settings,
+    database: Database,
+    downloader: Downloader,
+    sender: AudioSender,
+    yandex: YandexAuth,
 ) -> Dispatcher:
     # Everything passed here is injected into handlers and middlewares by name
     dispatcher = Dispatcher(
@@ -68,6 +74,7 @@ def build_dispatcher(
         database=database,
         downloader=downloader,
         sender=sender,
+        yandex=yandex,
         download_slots=asyncio.Semaphore(settings.max_parallel_downloads),
     )
     # Order matters: users are registered before their access is checked
@@ -104,11 +111,20 @@ async def run(settings: Settings, database: Database) -> None:
             settings.api_hash.get_secret_value(),
         )
 
+    env_token = settings.yandex_music_token
+    yandex = YandexAuth(
+        database,
+        # Stable per bot, so signing in again replaces the bot's previous Yandex token
+        device_id=f"musicbot-{bot.id}",
+        env_token=env_token.get_secret_value() if env_token else None,
+    )
+
     dispatcher = build_dispatcher(
         settings=settings,
         database=database,
         downloader=Downloader(settings.cookies_file, settings.max_duration_minutes),
         sender=AudioSender(bot, settings.max_upload_size, telethon),
+        yandex=yandex,
     )
 
     try:
@@ -127,5 +143,6 @@ async def run(settings: Settings, database: Database) -> None:
         logger.info("Shutting down")
         if telethon:
             await telethon.close()
+        await yandex.close()
         await database.close()
         await bot.session.close()

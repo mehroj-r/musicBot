@@ -17,7 +17,8 @@ ADMIN_HELP_TEXT = (
     "\n\n<b>Admin</b>\n"
     "/allow USER_ID - Give someone access\n"
     "/revoke USER_ID - Take access away\n"
-    "/users - List who has access"
+    "/users - List who has access\n"
+    "/yandex - Sign in to Yandex Music"
 )
 
 
