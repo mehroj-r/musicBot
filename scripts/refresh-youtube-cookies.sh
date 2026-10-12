@@ -40,8 +40,8 @@ die() {
 
 # ask VARIABLE "Question" default: prompt, keeping the default on an empty answer
 ask() {
-    local reply
-    read -r -p "$2 [$3]: " reply
+    local reply=""
+    read -r -p "$2 [$3]: " reply || true
     printf -v "$1" '%s' "${reply:-$3}"
 }
 
@@ -99,7 +99,7 @@ A $BROWSER window opens with the dedicated YouTube profile. In it:
   4. Close the window. Don't sign out: that would invalidate the cookies
 
 EOF
-    read -r -p "Press Enter to open the browser..."
+    read -r -p "Press Enter to open the browser..." || true
     # Plain-text cookie storage, so yt-dlp can read them without the system keyring
     "$BROWSER" --user-data-dir="$PROFILE_DIR" --password-store=basic --no-first-run \
         --no-default-browser-check --new-window "https://www.youtube.com/" >/dev/null 2>&1 || true
@@ -143,7 +143,9 @@ summarize() {
 
 upload() {
     local answer remote_tmp
-    read -r -p "Upload them to $SERVER:$REMOTE_DIR and enable them for the bot? [y/N] " answer
+    # No answer (e.g. no terminal) counts as no
+    read -r -p "Upload them to $SERVER:$REMOTE_DIR and enable them for the bot? [y/N] " answer ||
+        answer=""
     if [[ $answer != [yY]* ]]; then
         echo "Not uploaded. The cookies stay in $COOKIES (upload later with --upload-only)."
         return
