@@ -1,16 +1,18 @@
 # Music Bot (Telegram)
 
-A Telegram bot that turns links from YouTube, YouTube Music, SoundCloud, Bandcamp and
+A private Telegram bot that turns links from YouTube, YouTube Music, SoundCloud, Bandcamp and
 [other sites supported by yt-dlp](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)
-into tagged audio files and posts them to a Telegram channel.
+into tagged audio files, sent back in the chat or posted to the user's channel.
 
 ## Features
+- Private: admins grant access by user ID; strangers' requests reach the admins with an Allow button.
+- Per-user `/settings`: M4A (default, no re-encoding) or MP3, and an optional channel to post to.
 - Downloads audio with `yt-dlp`, including YouTube's JavaScript challenges (via Deno).
 - Writes title, artist and square cover art into the file; sends a proper Telegram thumbnail.
 - Uploads up to 50 MB through the Bot API, or up to 2000 MB with Telethon or a local Bot API
   server (see [Large files](#large-files)).
 - Refuses playlists, live streams and tracks above a configurable length; limits parallel downloads.
-- Stores users in SQLite (SQLAlchemy + Alembic); migrations run automatically on startup.
+- Stores users and their settings in SQLite (SQLAlchemy + Alembic); migrations run on startup.
 
 ## Running with Docker
 Requirements: Docker with the Compose plugin.
@@ -19,8 +21,9 @@ Requirements: Docker with the Compose plugin.
    ```bash
    cp .env.example .env
    ```
-   Set at least `BOT_API_TOKEN` (from [@BotFather](https://t.me/BotFather)) and `CHANNEL_ID`
-   (numeric, e.g. `-1001234567890`). Add the bot to the channel as an admin that can post.
+   Set `BOT_API_TOKEN` (from [@BotFather](https://t.me/BotFather)) and `ADMIN_IDS`, your
+   numeric Telegram user ID. If you don't know it, start the bot without it and send it a
+   message: it replies with your ID.
 2. Optional: YouTube cookies help with age-restricted videos and bot checks. Export them in
    Netscape format and save them as `secrets/cookies.txt` (mounted read-only into the container).
 3. Start the bot:
@@ -37,7 +40,7 @@ All settings come from environment variables (or `.env`):
 | Variable | Default | Purpose |
 |---|---|---|
 | `BOT_API_TOKEN` | required | Bot token from @BotFather |
-| `CHANNEL_ID` | required | Channel the audio is posted to |
+| `ADMIN_IDS` | empty | Comma-separated user IDs of admins; with none, nobody can use the bot |
 | `API_ID`, `API_HASH` | unset | App credentials from [my.telegram.org](https://my.telegram.org), for large files |
 | `LOCAL_BOT_API_URL` | unset | URL of a local Bot API server, for large files |
 | `COOKIES_FILE` | unset | Netscape-format cookies for yt-dlp |
@@ -45,6 +48,15 @@ All settings come from environment variables (or `.env`):
 | `MAX_DURATION_MINUTES` | `180` | Longest track the bot will download |
 | `DATA_DIR` | `data` | Where the database and Telethon session are stored |
 | `LOG_LEVEL` | `INFO` | Python logging level |
+
+## Using the bot
+- **Access:** when someone without access messages the bot, they get their user ID and every
+  admin gets a request with **Allow** / **Ignore** buttons (at most once a day per person).
+  Admins can also use `/allow USER_ID`, `/revoke USER_ID` and `/users`.
+- **Format:** `/settings` switches between M4A (YouTube's original AAC, no re-encoding) and MP3.
+- **Destination:** audio comes back in the chat. To post it to a channel instead, tap
+  **Post to a channel** in `/settings` and pick one you manage; Telegram adds the bot there as
+  an admin that can post.
 
 ## Large files
 The cloud Bot API refuses uploads above 50 MB (about 36 minutes of MP3). The bot picks an
@@ -99,8 +111,9 @@ src/musicbot/
   app.py           # bot, dispatcher and upload-mode wiring
   config.py        # settings from the environment
   db/              # SQLAlchemy models, database setup, Alembic migrations
-  handlers/        # /start, /help, link downloads, fallback
-  middlewares.py   # registers users
+  access.py        # access requests and admin notifications
+  handlers/        # /start, /help, admin commands, /settings, link downloads, fallback
+  middlewares.py   # registers users and checks their access
   services/        # yt-dlp downloads, artwork and tags, uploads
 tests/             # pytest suite
 ```
