@@ -9,6 +9,7 @@ from sqlalchemy import create_engine, text
 from musicbot.config import AudioFormat
 from musicbot.db.base import Base
 from musicbot.db.database import Database, alembic_config
+from musicbot.db.tracks import find_cached, forget_cached, save_cached
 from musicbot.db.users import (
     claim_access_request,
     list_allowed,
@@ -16,6 +17,8 @@ from musicbot.db.users import (
     update_user,
     upsert_user,
 )
+from musicbot.services.downloader import Track
+from musicbot.services.uploader import SentAudio
 
 
 def test_migrations_match_models(database: Database):
@@ -100,3 +103,18 @@ def test_upgrade_keeps_existing_users(tmp_path):
         ).one()
     engine.dispose()
     assert tuple(row) == ("Old", 0, "m4a", None)
+
+
+async def test_cache_entries_are_replaced_and_forgotten(async_database: Database):
+    track = Track("Youtube", "abc", "Title", "Artist", 60, "")
+    async with async_database.session() as session:
+        await save_cached(session, track, AudioFormat.M4A, SentAudio(1, 10, "old"))
+        await save_cached(session, track, AudioFormat.M4A, SentAudio(2, 20, "new"))
+        await save_cached(session, track, AudioFormat.MP3, SentAudio(3, 30, None))
+
+        cached = await find_cached(session, "Youtube", "abc", AudioFormat.M4A)
+        assert (cached.chat_id, cached.message_id, cached.file_id) == (2, 20, "new")
+        assert (await find_cached(session, "Youtube", "abc", AudioFormat.MP3)).file_id is None
+
+        await forget_cached(session, cached.id)
+        assert await find_cached(session, "Youtube", "abc", AudioFormat.M4A) is None

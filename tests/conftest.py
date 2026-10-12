@@ -19,6 +19,7 @@ from aiogram.types import (
     ChatShared,
     Message,
     MessageEntity,
+    MessageId,
     Update,
     User,
 )
@@ -94,6 +95,8 @@ class FakeSession(BaseSession):
             if isinstance(response, Exception):
                 raise response
             return response
+        if name == "CopyMessage":
+            return MessageId(message_id=next(self._ids))
         if name not in MESSAGE_METHODS:
             return True
         audio = None
@@ -124,10 +127,22 @@ class FakeSession(BaseSession):
 class FakeDownloader:
     error: Exception | None = None
     size: int = 1000
+    # Reported as the track's identity for YouTube links, as yt-dlp would
+    source_id: str = "abc123"
+    # Pause after reporting progress, so the progress message can catch up
+    delay: float = 0
     calls: list[tuple[str, AudioFormat]] = field(default_factory=list)
 
-    async def download(self, url: str, work_dir: Path, audio_format: AudioFormat):
+    def identify(self, url: str) -> tuple[str, str] | None:
+        return ("Youtube", self.source_id) if "youtu" in url else None
+
+    async def download(
+        self, url: str, work_dir: Path, audio_format: AudioFormat, on_progress=None
+    ) -> DownloadedTrack:
         self.calls.append((url, audio_format))
+        if on_progress:
+            on_progress("download", 0.5)
+            await asyncio.sleep(self.delay)
         if self.error:
             raise self.error
         audio_path = work_dir / f"audio.{audio_format}"
@@ -136,7 +151,7 @@ class FakeDownloader:
         cover_path.write_bytes(b"jpeg")
         track = Track(
             source="Youtube",
-            source_id="abc123",
+            source_id=self.source_id,
             title="Rock & <Roll>",
             artist="AC/DC",
             duration=254,
@@ -149,14 +164,25 @@ class FakeDownloader:
 class FakeSender:
     max_size: int = 50 * 1024 * 1024
     error: Exception | None = None
+    resend_error: Exception | None = None
     calls: list[tuple[int, DownloadedTrack, str]] = field(default_factory=list)
+    resends: list[tuple[int, str | None, str]] = field(default_factory=list)
+    _message_ids: itertools.count = field(default_factory=lambda: itertools.count(1))
 
     async def send_audio(self, chat_id: int, audio: DownloadedTrack, caption: str) -> SentAudio:
         assert audio.audio_path.exists(), "the file must still exist while it is uploaded"
         self.calls.append((chat_id, audio, caption))
         if self.error:
             raise self.error
-        return SentAudio(chat_id=chat_id, message_id=1, file_id="file-id")
+        return SentAudio(chat_id=chat_id, message_id=next(self._message_ids), file_id="file-id")
+
+    async def resend(self, chat_id: int, cached, caption: str) -> SentAudio:
+        self.resends.append((chat_id, cached.file_id, caption))
+        if self.resend_error:
+            raise self.resend_error
+        return SentAudio(
+            chat_id=chat_id, message_id=next(self._message_ids), file_id=cached.file_id
+        )
 
 
 class Harness:

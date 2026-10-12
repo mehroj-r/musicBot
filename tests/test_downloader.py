@@ -10,6 +10,7 @@ from musicbot.services.downloader import (
     DownloadRejected,
     Track,
     describe_error,
+    progress_hooks,
     safe_filename,
     track_from_info,
 )
@@ -109,3 +110,39 @@ def test_each_job_gets_its_own_cookies_copy(tmp_path: Path):
 def test_missing_cookies_file_is_ignored(tmp_path: Path):
     downloader = Downloader(tmp_path / "missing.txt", 180)
     assert "cookiefile" not in downloader._options(tmp_path, AudioFormat.M4A)
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", ("Youtube", "dQw4w9WgXcQ")),
+        ("https://youtu.be/dQw4w9WgXcQ?si=share", ("Youtube", "dQw4w9WgXcQ")),
+        ("https://music.youtube.com/watch?v=dQw4w9WgXcQ", ("Youtube", "dQw4w9WgXcQ")),
+        ("https://www.youtube.com/shorts/aqz-KE-bpKQ", ("Youtube", "aqz-KE-bpKQ")),
+        # From a Mix: only the video is downloaded, so it's the video's key
+        (
+            "https://m.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ&start_radio=1",
+            ("Youtube", "dQw4w9WgXcQ"),
+        ),
+        ("https://soundcloud.com/forss/flickermood", None),
+        ("https://example.com/page", None),
+    ],
+)
+def test_identify_without_network(url, expected):
+    assert Downloader(None, 180).identify(url) == expected
+
+
+def test_progress_hooks_report_stages():
+    reports = []
+    on_download, on_postprocess = (
+        hooks[0] for hooks in progress_hooks(lambda *r: reports.append(r))
+    )
+
+    on_download({"status": "downloading", "downloaded_bytes": 25, "total_bytes": 100})
+    on_download({"status": "downloading", "downloaded_bytes": 25, "total_bytes_estimate": 50})
+    on_download({"status": "downloading", "downloaded_bytes": 25})
+    on_download({"status": "finished", "downloaded_bytes": 100})
+    on_postprocess({"status": "started", "postprocessor": "ExtractAudio"})
+    on_postprocess({"status": "started", "postprocessor": "MoveFiles"})
+
+    assert reports == [("download", 0.25), ("download", 0.5), ("download", None), ("convert", None)]

@@ -7,12 +7,16 @@ into tagged audio files, sent back in the chat or posted to the user's channel.
 ## Features
 - Private: admins grant access by user ID; strangers' requests reach the admins with an Allow button.
 - Per-user `/settings`: M4A (default, no re-encoding) or MP3, and an optional channel to post to.
-- Downloads audio with `yt-dlp`, including YouTube's JavaScript challenges (via Deno).
+- Downloads audio with `yt-dlp`, including YouTube's JavaScript challenges (via Deno), and
+  shows the progress while it works.
+- Sends tracks that were already uploaded again instantly, without downloading them, from a
+  cache of Telegram file IDs (per track and format).
 - Writes title, artist and square cover art into the file; sends a proper Telegram thumbnail.
 - Uploads up to 50 MB through the Bot API, or up to 2000 MB with Telethon or a local Bot API
   server (see [Large files](#large-files)).
 - Refuses playlists, live streams and tracks above a configurable length; limits parallel downloads.
-- Stores users and their settings in SQLite (SQLAlchemy + Alembic); migrations run on startup.
+- Stores users, settings and the track cache in SQLite (SQLAlchemy + Alembic); migrations run
+  on startup.
 
 ## Running with Docker
 Requirements: Docker with the Compose plugin.

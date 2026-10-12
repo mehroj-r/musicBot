@@ -1,10 +1,20 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Enum, String, false
+from sqlalchemy import BigInteger, Enum, String, UniqueConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column
 
 from musicbot.config import AudioFormat
 from musicbot.db.base import Base, TimestampMixin, UTCDateTime
+
+
+def audio_format_type() -> Enum:
+    # Stored as the plain value ("m4a"), loaded back as AudioFormat
+    return Enum(
+        AudioFormat,
+        native_enum=False,
+        length=8,
+        values_callable=lambda formats: [audio_format.value for audio_format in formats],
+    )
 
 
 class User(TimestampMixin, Base):
@@ -22,12 +32,7 @@ class User(TimestampMixin, Base):
 
     # Preferences
     audio_format: Mapped[AudioFormat] = mapped_column(
-        Enum(
-            AudioFormat,
-            native_enum=False,
-            length=8,
-            values_callable=lambda formats: [audio_format.value for audio_format in formats],
-        ),
+        audio_format_type(),
         default=AudioFormat.M4A,
         server_default=AudioFormat.M4A.value,
     )
@@ -39,3 +44,28 @@ class User(TimestampMixin, Base):
     def display_name(self) -> str:
         name = " ".join(part for part in (self.first_name, self.last_name) if part)
         return name or str(self.id)
+
+
+class CachedTrack(TimestampMixin, Base):
+    """
+    A track already uploaded once, so it can be sent again without downloading it.
+    """
+
+    __tablename__ = "cached_tracks"
+    __table_args__ = (
+        UniqueConstraint("source", "source_id", "audio_format", name="uq_cached_tracks_track"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # yt-dlp's extractor key and the ID it gives the track, e.g. "Youtube", "dQw4w9WgXcQ"
+    source: Mapped[str] = mapped_column(String(64))
+    source_id: Mapped[str] = mapped_column(String(255))
+    audio_format: Mapped[AudioFormat] = mapped_column(audio_format_type())
+    title: Mapped[str] = mapped_column(String(255))
+    artist: Mapped[str] = mapped_column(String(255))
+
+    # Bot API file ID, reusable in any chat; Telethon uploads don't produce one
+    file_id: Mapped[str | None] = mapped_column(String(255))
+    # The first post, copied when there is no file ID
+    chat_id: Mapped[int] = mapped_column(BigInteger)
+    message_id: Mapped[int] = mapped_column(BigInteger)
