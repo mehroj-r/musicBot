@@ -1,172 +1,38 @@
-name: Daily yt-dlp Update with uv
+name: Update yt-dlp
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # Daily at midnight UTC
+    - cron: "0 0 * * *" # Daily at midnight UTC
   workflow_dispatch:
 
 jobs:
-  update-and-redeploy:
+  update:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.13.3'
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v2
-
-      - name: Get current yt-dlp version
-        id: current_version
-        run: |
-          
-          # Function to normalize version
-          normalize_version() {
-            local version=$1
-            echo "$version" | awk -F. '{printf "%04d.%02d.%02d\n", $1, $2, $3}'
-          }
-          
-          # Parse yt-dlp version from uv.lock file
-          if [ -f "uv.lock" ]; then
-            # Look for the yt-dlp package block and get the version
-            CURRENT=$(awk '/name = "yt-dlp"/{getline; if(/version = /) {gsub(/[" ]/, "", $3); print $3}}' uv.lock || echo "unknown")
-          else
-            # Fallback: sync and check version directly
-            uv sync --quiet || true
-            CURRENT=$(uv run yt-dlp --version 2>/dev/null || echo "not installed")
-          fi
-          
-          # Normalize the version for consistent comparison
-          CURRENT=$(normalize_version "$CURRENT")
-          
-          echo "version=$CURRENT" >> $GITHUB_OUTPUT
-          echo "Current yt-dlp version: $CURRENT"
-
-      - name: Update dependencies with uv
-        id: update_deps
-        run: |
-          
-          # Function to normalize version
-          normalize_version() {
-            local version=$1
-            echo "$version" | awk -F. '{printf "%04d.%02d.%02d\n", $1, $2, $3}'
-          }
-          
-          echo "Running uv lock --upgrade..."
-          uv lock --upgrade
-          
-          echo "Running uv sync..."
-          uv sync
-          
-          # Get new version after update
-          NEW_VERSION=$(uv run yt-dlp --version 2>/dev/null || echo "failed to get version")
-          
-          # Normalize the version for consistent comparison
-          NEW_VERSION=$(normalize_version "$NEW_VERSION")
-          
-          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
-          echo "New yt-dlp version: $NEW_VERSION"
-
-      - name: Check if update occurred
-        id: check_update
-        run: |
-          OLD_VERSION="${{ steps.current_version.outputs.version }}"
-          NEW_VERSION="${{ steps.update_deps.outputs.new_version }}"
-  
-          
-          if [ "$NEW_VERSION" = "failed to get version" ]; then
-            echo "update_available=false" >> $GITHUB_OUTPUT
-            echo "❌ Failed to determine new version"
-          elif [ "$OLD_VERSION" = "unknown" ] || [ "$OLD_VERSION" = "not installed" ]; then
-            echo "update_available=true" >> $GITHUB_OUTPUT
-            echo "✅ yt-dlp newly installed: $NEW_VERSION"
-          else  
-            if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
-              echo "update_available=true" >> $GITHUB_OUTPUT
-              echo "✅ Update detected: $OLD_VERSION → $NEW_VERSION"
-            else
-              echo "update_available=false" >> $GITHUB_OUTPUT
-              echo "ℹ️ No update needed. Version remains: $OLD_VERSION"
-            fi
-          fi
-
-      - name: Check for lock file changes
-        id: check_changes
-        run: |
-          if git diff --quiet uv.lock; then
-            echo "lock_changed=false" >> $GITHUB_OUTPUT
-            echo "No changes in uv.lock file"
-          else
-            echo "lock_changed=true" >> $GITHUB_OUTPUT
-            echo "uv.lock file has changes"
-          fi
-
-      - name: Commit updated lock file
-        if: steps.check_changes.outputs.lock_changed == 'true'
-        run: |
-          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add uv.lock
-          git commit -m "chore: update yt-dlp and dependencies
-          
-          - Previous yt-dlp version: ${{ steps.current_version.outputs.version }}
-          - New yt-dlp version: ${{ steps.update_deps.outputs.new_version }}
-          - Updated at: $(date -u)"
-          git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Deployment Status
-        run: |
-          if [ "${{ steps.check_changes.outputs.lock_changed }}" == "true" ]; then
-            echo "🚀 Lock file updated and pushed to master - deploy.yml will handle deployment."
-          else
-            echo "⏭️ No changes to commit - deployment not needed"
-          fi
-
-      - name: Trigger Deploy Workflow
-        if: steps.check_changes.outputs.lock_changed == 'true'
-        uses: peter-evans/repository-dispatch@v3
+      # Push with the PAT: pushes made with GITHUB_TOKEN don't trigger CI, and CI triggers the deploy
+      - uses: actions/checkout@v7
         with:
           token: ${{ secrets.PAT }}
-          repository: ${{ github.repository }}
-          event-type: trigger-deploy
 
-      - name: Create detailed summary
+      - uses: astral-sh/setup-uv@v10.3.0
+
+      - name: Upgrade yt-dlp
+        id: upgrade
         run: |
-          echo "## 🔄 yt-dlp Update Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **Previous Version** | \`${{ steps.current_version.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Current Version** | \`${{ steps.update_deps.outputs.new_version }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Update Available** | ${{ steps.check_update.outputs.update_available == 'true' && '✅ Yes' || '❌ No' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Lock File Changed** | ${{ steps.check_changes.outputs.lock_changed == 'true' && '✅ Yes' || '❌ No' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Redeployment Triggered** | ${{ steps.check_update.outputs.update_available == 'true' && '✅ Yes' || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Updated At** | $(date -u) |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "${{ steps.check_update.outputs.update_available }}" == "true" ]; then
-            echo "### 🎉 Update Successful!" >> $GITHUB_STEP_SUMMARY
-            echo "yt-dlp has been updated and redeployment was triggered." >> $GITHUB_STEP_SUMMARY
+          uv lock --upgrade-package yt-dlp --upgrade-package yt-dlp-ejs
+          if git diff --quiet uv.lock; then
+            echo "yt-dlp is already up to date." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "### ✨ No Action Needed" >> $GITHUB_STEP_SUMMARY
-            echo "yt-dlp is already up to date. No redeployment necessary." >> $GITHUB_STEP_SUMMARY
+            echo "version=$(uv tree --frozen --package yt-dlp --depth 0 | awk 'NR==1 {print $2}')" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Log workflow completion
+      - name: Commit and push
+        if: steps.upgrade.outputs.version
+        env:
+          VERSION: ${{ steps.upgrade.outputs.version }}
         run: |
-          echo "=================================="
-          echo "yt-dlp Update Workflow Completed"
-          echo "=================================="
-          echo "Trigger: ${{ github.event_name }}"
-          echo "Repository: ${{ github.repository }}"
-          echo "Actor: ${{ github.actor }}"
-          echo "Run ID: ${{ github.run_id }}"
-          echo "Commit: ${{ github.sha }}"
-          echo "Update Status: ${{ steps.check_update.outputs.update_available == 'true' && 'Updated' || 'No update needed' }}"
-          echo "=================================="
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: update yt-dlp to $VERSION"
+          git push
+          echo "Updated yt-dlp to $VERSION; CI and the deploy run next." >> "$GITHUB_STEP_SUMMARY"

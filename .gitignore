@@ -1,8 +1,12 @@
 /.venv/
 /.idea/
-/credentials.py
-/session_name.session
 .env
-/src/cookies.txt
-/tmp/
-/logs/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# Runtime state
+/data/
+/secrets/
+*.session
+cookies.txt
