@@ -1,16 +1,18 @@
 import asyncio
 import os
-import uuid
+import shutil
+import tempfile
 from abc import abstractmethod, ABC
 from typing import final
 
-from aiogram.client.session import aiohttp
+import aiohttp
 from mutagen.id3 import TIT2, TPE1, APIC
 from mutagen.mp3 import MP3
+from PIL import Image
 
 from config.logging_conf import logger
 from core.templates import AudioData, AudioMetadata
-from utils.dlp_utils import valid_filename
+from utils.dlp_utils import safe_filename
 
 
 class BaseDownloadService(ABC):
@@ -20,123 +22,108 @@ class BaseDownloadService(ABC):
 
     @classmethod
     @final
-    async def download(cls, url: str, *args, **kwargs) -> AudioData:
+    async def download(cls, url: str) -> AudioData:
         """
-        Download audio from the given URL.
+        Download audio from the given URL into a fresh per-job directory.
+        The caller owns the returned ``work_dir`` and must remove it when done.
 
         :param url: The URL of the audio.
-        :return: The path to the downloaded audio file.
+        :return: The downloaded audio with its metadata.
         """
+        work_dir = tempfile.mkdtemp(prefix="job-", dir=cls._get_download_root())
 
-        # Generate save paths for audio and thumbnail
-        audio_file_path = cls._get_audio_file_path()
-        thumbnail_file_path = cls._get_thumbnail_file_path()
+        try:
+            # Download the audio and read its metadata from the same extraction
+            audio_details, downloaded_path = await cls.download_audio(url=url, work_dir=work_dir)
 
-        # Initiate the audio download task
-        audio_download_task = asyncio.create_task(
-            cls.download_audio(url=url, save_path=audio_file_path)
-        )
+            # Name the file after its title so it looks right once saved from Telegram
+            audio_file_path = os.path.join(work_dir, f"{safe_filename(audio_details.title)}.mp3")
+            os.rename(downloaded_path, audio_file_path)
 
-        # Retrieve audio details
-        audio_details: AudioMetadata = await cls.get_audio_details(url=url)
+            # Cover art is optional; a missing or broken thumbnail must not fail the download
+            cover_path, thumbnail_path = None, None
+            if audio_details.thumbnail_url:
+                try:
+                    cover_path, thumbnail_path = await cls.download_thumbnail(
+                        thumbnail_url=audio_details.thumbnail_url,
+                        work_dir=work_dir,
+                    )
+                except Exception as e:
+                    logger.warning(f"Continuing without cover art: {e}")
 
-        # Generate new file_path for audio
-        new_audio_file_path = cls._get_audio_file_path(filename=audio_details.title)
+            audio_data = AudioData(
+                work_dir=work_dir,
+                file_path=audio_file_path,
+                cover_path=cover_path,
+                thumbnail_path=thumbnail_path,
+                **audio_details.model_dump(),
+            )
 
-        # Download the thumbnail if it exists
-        await cls.download_thumbnail(thumbnail_url=audio_details.thumbnail_url, save_path=thumbnail_file_path)
-
-        # Wait for the audio download to complete
-        await audio_download_task
-
-        # Rename the audio file to include the title
-        os.rename(audio_file_path, new_audio_file_path)
-
-        # Create AudioData instance with the downloaded audio and metadata
-        audio_data = AudioData(file_path=new_audio_file_path,
-                               thumbnail_path=thumbnail_file_path,
-                               **audio_details.model_dump())
-
-        # Process the audio file to add metadata and cover art
-        await cls.process_audio(audio_data=audio_data)
+            # Process the audio file to add metadata and cover art
+            await cls.process_audio(audio_data=audio_data)
+        except BaseException:
+            shutil.rmtree(work_dir, ignore_errors=True)
+            raise
 
         return audio_data
 
     @classmethod
     @final
-    def _get_audio_file_path(cls, filename: str = None) -> str:
-
-        if not filename:
-            filename = valid_filename(str(uuid.uuid4().hex))
-
-        download_dir = os.getcwd() + "/tmp"
-        file_path = f"{download_dir}/{filename}.mp3"
-
-        if not os.path.exists(download_dir):
-            os.makedirs(download_dir)
-
-        return file_path
-
-    @classmethod
-    @final
-    def _get_thumbnail_file_path(cls) -> str:
-        filename = valid_filename(str(uuid.uuid4().hex))
-        download_dir = os.getcwd() + "/tmp"
-        file_path = f"{download_dir}/{filename}_thumbnail.jpg"
-
-        if not os.path.exists(download_dir):
-            os.makedirs(download_dir)
-
-        return file_path
+    def _get_download_root(cls) -> str:
+        download_dir = os.path.join(os.getcwd(), "tmp")
+        os.makedirs(download_dir, exist_ok=True)
+        return download_dir
 
     @classmethod
     @abstractmethod
-    async def get_audio_details(cls, url: str) -> AudioMetadata:
+    async def download_audio(cls, url: str, work_dir: str) -> tuple[AudioMetadata, str]:
         """
-        Download details from the given URL.
+        Download the audio file from the given URL into ``work_dir`` as MP3.
 
         :param url: The URL of the audio.
-        :return: AudioData containing metadata and thumbnail URL.
-        """
-        pass
-
-    @classmethod
-    @abstractmethod
-    async def download_audio(cls, url: str, save_path: str) -> None:
-        """
-        Download the audio file from the given URL and save it to the specified path.
-
-        :param url: The URL of the audio.
-        :param save_path: The path where the audio file will be saved.
-        :return: AudioData containing the audio file and metadata.
+        :param work_dir: The directory where the audio file will be saved.
+        :return: The audio metadata and the path of the downloaded MP3 file.
         """
         pass
 
     @classmethod
     @final
-    async def download_thumbnail(cls, thumbnail_url: str, save_path: str) -> None:
+    async def download_thumbnail(cls, thumbnail_url: str, work_dir: str) -> tuple[str, str]:
         """
-        Download the thumbnail image from the given URL using async HTTP client.
+        Download the thumbnail and derive a square JPEG cover and a Telegram-sized thumbnail.
+
+        :return: Paths of the cover image and the 320x320 thumbnail.
         """
         logger.info("Downloading thumbnail ...")
 
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(thumbnail_url, allow_redirects=True) as response:
-                    response.raise_for_status()
-                    content = await response.read()
+        async with aiohttp.ClientSession() as session:
+            async with session.get(thumbnail_url, allow_redirects=True) as response:
+                response.raise_for_status()
+                content = await response.read()
 
-                    # Write file in thread pool to avoid blocking
-                    await asyncio.to_thread(
-                        cls._write_file,
-                        save_path,
-                        content
-                    )
-        except Exception as e:
-            logger.error(f"Failed to download thumbnail: {str(e)}")
-            raise
-        logger.info(f"Thumbnail successfully downloaded to {save_path}")
+        source_path = os.path.join(work_dir, "thumbnail_source")
+        cover_path = os.path.join(work_dir, "cover.jpg")
+        thumbnail_path = os.path.join(work_dir, "thumbnail.jpg")
 
+        def convert():
+            cls._write_file(source_path, content)
+            with Image.open(source_path) as image:
+                # Center-crop to a square: YouTube art tracks put the album cover in the middle
+                image = image.convert("RGB")
+                side = min(image.size)
+                left = (image.width - side) // 2
+                top = (image.height - side) // 2
+                square = image.crop((left, top, left + side, top + side))
+
+                square.resize((min(side, 800),) * 2, Image.LANCZOS).save(cover_path, "JPEG", quality=90)
+                # Telegram only accepts JPEG thumbnails up to 320x320 and 200 kB
+                square.resize((320, 320), Image.LANCZOS).save(thumbnail_path, "JPEG", quality=85)
+
+        # Decode and write images in thread pool to avoid blocking
+        await asyncio.to_thread(convert)
+        logger.info(f"Thumbnail successfully saved to {thumbnail_path}")
+
+        return cover_path, thumbnail_path
 
     @classmethod
     @final
@@ -150,7 +137,7 @@ class BaseDownloadService(ABC):
         file_path = audio_data.file_path
         title = audio_data.title
         artist = audio_data.artist
-        thumbnail_path = audio_data.thumbnail_path
+        cover_path = audio_data.cover_path
 
         def add_metadata():
             try:
@@ -165,9 +152,9 @@ class BaseDownloadService(ABC):
                 audio_file.tags.add(TIT2(encoding=3, text=title))  # Title
                 audio_file.tags.add(TPE1(encoding=3, text=artist))  # Artist
 
-                # Add cover art if thumbnail exists
-                if os.path.exists(thumbnail_path):
-                    with open(thumbnail_path, 'rb') as albumart:
+                # Add cover art if it was downloaded
+                if cover_path:
+                    with open(cover_path, 'rb') as albumart:
                         audio_file.tags.add(
                             APIC(
                                 encoding=3,                # UTF-8

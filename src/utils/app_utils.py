@@ -1,12 +1,15 @@
-import os
+import html
 
 from aiogram.types import FSInputFile
 
 from config.settings import CHANNEL_ID
-from config.logging_conf import logger
+from core.templates import AudioData
 from core.utils import get_current_time
 from db.models import User
 from services.telethon import TelethonService
+
+# Bot API refuses uploads above 50 MB; bigger files go through Telethon
+BOT_API_UPLOAD_LIMIT = 50 * 1024 * 1024
 
 
 async def send_photo(bot, chat_id, photo_path, caption):
@@ -14,25 +17,21 @@ async def send_photo(bot, chat_id, photo_path, caption):
     await bot.send_photo(chat_id=chat_id, photo=photo, caption=caption)
 
 
-async def upload_to_telegram(bot, file_path, thumbnail_path, file_caption):
-    if not os.path.isfile(file_path):
-        logger.error("The specified file does not exist.")
-        return
-    try:
-        audio_file = FSInputFile(file_path)
-        thumbnail_file = FSInputFile(thumbnail_path)
-        await bot.send_audio(
-            chat_id=CHANNEL_ID,
-            audio=audio_file,
-            caption=f"🔉 <b>{file_caption}</b>",
-            thumbnail=thumbnail_file
-        )
-    except Exception as e:
-        logger.error(f"An error occurred while uploading the file: {e}")
+async def upload_to_telegram(bot, audio: AudioData) -> None:
+    await bot.send_audio(
+        chat_id=CHANNEL_ID,
+        audio=FSInputFile(audio.file_path),
+        caption=f"🔉 <b>{html.escape(audio.title)}</b>",
+        title=audio.title,
+        performer=audio.artist,
+        duration=audio.duration,
+        thumbnail=FSInputFile(audio.thumbnail_path) if audio.thumbnail_path else None,
+        request_timeout=300,
+    )
 
 
-async def upload_big_file(file_path: str, cover_image_path: str, data: dict[str, str]):
-    await TelethonService.upload_files(file_path, cover_image_path, data)
+async def upload_big_file(audio: AudioData) -> None:
+    await TelethonService.upload_files(audio)
 
 
 def is_new_user(user: User) -> bool:

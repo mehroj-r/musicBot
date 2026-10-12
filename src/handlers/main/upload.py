@@ -1,72 +1,74 @@
+import html
 import os
+import re
+import shutil
 
-from aiogram import types, Router, F, Bot
+from aiogram import types, Router, F
 
 from config.logging_conf import logger
 from services.yt_dlp import DLPService
-from utils.app_utils import upload_to_telegram, send_photo, upload_big_file
+from utils.app_utils import BOT_API_UPLOAD_LIMIT, upload_to_telegram, send_photo, upload_big_file
+from utils.dlp_utils import describe_download_error
 
 router = Router()
 
-@router.message(F.text.startswith("https://"))
+YOUTUBE_URL = re.compile(
+    r"^https?://(?:(?:www|m|music)\.)?(?:youtube\.com/(?:watch\?|shorts/)|youtu\.be/)",
+    re.IGNORECASE,
+)
+
+@router.message(F.text.regexp(r"^https?://"))
 async def download_audio(message: types.Message) -> None:
+    url = message.text.strip()
 
     # Check if the message text is a valid YouTube URL
-    if (
-            message.text.startswith("https://www.youtube.com/watch?")
-            or message.text.startswith("https://youtu.be/")
-            or message.text.startswith("https://youtube.com/watch?")
-    ):
-        download_service = DLPService()
-    else:
+    if not YOUTUBE_URL.match(url):
         await message.reply("Invalid URL")
         return None
-
 
     # Send a message indicating that the download is in progress
     downloading_sent = await message.reply("Downloading ...", disable_web_page_preview=True)
 
-    # Download the audio file and get the file location, thumbnail location, caption, and metadata
+    # Download the audio file along with its metadata and cover art
     try:
-        audio_data = await download_service.download(url=message.text)
+        audio_data = await DLPService.download(url=url)
     except Exception as e:
         logger.error(f"An error occurred while downloading audio: {e}")
-        await downloading_sent.edit_text(
-            text=f"An error occured"
-        )
+        await downloading_sent.edit_text(text=describe_download_error(e))
         return None
 
-    file_location, thumbnail_location, file_caption, data = audio_data.file_path, audio_data.thumbnail_path, audio_data.title, {"artist": audio_data.artist, "title": audio_data.title}
+    title = html.escape(audio_data.title)
 
-    # After downloading is done, update the message to indicate that the download is complete
-    await downloading_sent.edit_text(
-        text=f"<b>🎵 {data['title']}</b>\n\nDownloading - DONE\nUploading ...",
-    )
-
-    # Upload the file to Telegram according to its size
     try:
-        if os.path.getsize(file_location) > 52428800:
-            await upload_big_file(file_location, thumbnail_location, data)
+        # After downloading is done, update the message to indicate that the download is complete
+        await downloading_sent.edit_text(
+            text=f"<b>🎵 {title}</b>\n\nDownloading - DONE\nUploading ...",
+        )
+
+        # Upload the file to Telegram according to its size
+        if os.path.getsize(audio_data.file_path) > BOT_API_UPLOAD_LIMIT:
+            await upload_big_file(audio_data)
         else:
-            await upload_to_telegram(message.bot, file_location, thumbnail_location, file_caption)
+            await upload_to_telegram(message.bot, audio_data)
+
+        # After the upload is complete, report back in the chat
+        done_text = f"<b>🎵 {title}</b>\n\nSuccessfully uploaded to the channel."
+        if audio_data.cover_path:
+            await send_photo(
+                bot=message.bot,
+                chat_id=message.chat.id,
+                photo_path=audio_data.cover_path,
+                caption=done_text,
+            )
+        else:
+            await message.answer(done_text)
     except Exception as e:
         logger.error(f"An error occurred while uploading the file: {e}")
-        await downloading_sent.edit_text(
-            text=f"An error occurred",
-        )
+        await downloading_sent.edit_text(text="An error occurred while uploading the file.")
         return None
-
-    # After the upload is complete, send a message with the thumbnail and caption in the chat
-    await send_photo(
-        bot=message.bot,
-        chat_id=message.chat.id,
-        photo_path=thumbnail_location,
-        caption=f"<b>🎵 {data['title']}</b>\n\nSuccessfully uploaded to the channel."
-    )
-
-    # Clean up the files after upload
-    os.remove(file_location)
-    os.remove(thumbnail_location)
+    finally:
+        # Clean up the files whether or not the upload succeeded
+        shutil.rmtree(audio_data.work_dir, ignore_errors=True)
 
     # Delete the messages
     await downloading_sent.delete()

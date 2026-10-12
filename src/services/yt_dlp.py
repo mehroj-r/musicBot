@@ -17,43 +17,15 @@ class DLPService(BaseDownloadService):
         logger.info(f"Using cookies file: {cookies_file}")
 
     @classmethod
-    async def get_audio_details(cls, url: str) -> AudioMetadata:
-
-        ydl_opts_info = {
-            'skip_download': True,
-            'quiet': True,
-            'extract_flat': 'in_playlist',
-            **cls.extra_kwargs
-        }
-
-        def extract_info():
-
-            logger.info("Extracting audio details ...")
-
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-                    return ydl.extract_info(url, download=False)
-            except Exception as e:
-                logger.error(f"Failed to extract audio details: {str(e)}")
-                raise
-
-        # Run in thread pool to avoid blocking
-        info = await asyncio.to_thread(extract_info)
-        logger.info("Audio details extracted successfully")
-
-        artist = info.get('uploader', 'Unknown Artist')
-        title = info.get('title', 'Unknown Title')
-        thumbnail_url = info.get('thumbnail', None)
-
-        return AudioMetadata(artist=artist, title=title, thumbnail_url=thumbnail_url)
-
-    @classmethod
-    async def download_audio(cls, url: str, save_path: str) -> None:
+    async def download_audio(cls, url: str, work_dir: str) -> tuple[AudioMetadata, str]:
 
         ydl_opts_audio = {
             'format': 'bestaudio/best',
             'quiet': True,
-            'outtmpl': save_path.rstrip('.mp3'),
+            # Links copied from a playlist or Mix carry &list=...; only fetch the linked video
+            'noplaylist': True,
+            'playlist_items': '1',
+            'outtmpl': os.path.join(work_dir, 'audio.%(ext)s'),
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -66,13 +38,27 @@ class DLPService(BaseDownloadService):
             logger.info("Downloading audio ...")
 
             try:
+                # One extraction gives both the metadata and the download
                 with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
-                    ydl.download([url])
+                    info = ydl.extract_info(url, download=True)
             except Exception as e:
                 logger.error(f"Failed to download audio: {str(e)}")
                 raise
 
-            logger.info(f"Audio downloaded successfully to {save_path}")
+            if info.get('_type', 'video') != 'video':
+                raise yt_dlp.utils.DownloadError("Unsupported URL: playlists are not supported")
+
+            return info
 
         # Run in thread pool to avoid blocking
-        await asyncio.to_thread(download_audio)
+        info = await asyncio.to_thread(download_audio)
+        file_path = info['requested_downloads'][0]['filepath']
+        logger.info(f"Audio downloaded successfully to {file_path}")
+
+        metadata = AudioMetadata(
+            artist=info.get('uploader') or 'Unknown Artist',
+            title=info.get('title') or 'Unknown Title',
+            duration=int(info['duration']) if info.get('duration') else None,
+            thumbnail_url=info.get('thumbnail'),
+        )
+        return metadata, file_path
