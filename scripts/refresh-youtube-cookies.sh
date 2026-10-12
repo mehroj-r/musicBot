@@ -6,6 +6,8 @@
 # exports the cookies with yt-dlp and, after you confirm, installs them on the server.
 # The profile and the server settings are kept for next time.
 set -euo pipefail
+# Everything this script writes (settings, profile, cookies) is readable by you only
+umask 077
 
 usage() {
     cat <<'EOF'
@@ -107,24 +109,25 @@ EOF
 }
 
 export_cookies() {
-    local browser tmp login_cookies
+    local browser tmp_dir exported login_cookies
     browser=$(ytdlp_browser)
     mkdir -p "$DATA_DIR"
-    tmp=$(mktemp "$DATA_DIR/youtube-cookies.XXXXXX") # created readable by you only
+    # yt-dlp first reads the --cookies file if it exists, and rejects an empty one,
+    # so export to a new path in a private temporary folder
+    tmp_dir=$(mktemp -d "$DATA_DIR/export.XXXXXX")
+    trap 'rm -rf "$tmp_dir"' EXIT
+    exported="$tmp_dir/cookies.txt"
 
     echo "Exporting cookies..."
-    if ! ytdlp --cookies-from-browser "$browser+basictext:$PROFILE_DIR/Default" --cookies "$tmp" \
-        --skip-download --no-warnings --print "Checked with: %(title)s" "$TEST_URL"; then
-        rm -f "$tmp"
+    ytdlp --cookies-from-browser "$browser+basictext:$PROFILE_DIR/Default" --cookies "$exported" \
+        --skip-download --no-warnings --print "Checked with: %(title)s" "$TEST_URL" ||
         die "yt-dlp could not export the cookies"
-    fi
 
-    login_cookies=$(grep -cE $'\t(LOGIN_INFO|__Secure-3PSID)\t' "$tmp" || true)
+    login_cookies=$(grep -cE $'\t(LOGIN_INFO|__Secure-3PSID)\t' "$exported" || true)
     if ((login_cookies == 0)); then
-        rm -f "$tmp"
         die "the profile isn't signed in to YouTube; sign in before closing the window"
     fi
-    mv "$tmp" "$COOKIES"
+    mv "$exported" "$COOKIES"
 }
 
 summarize() {
