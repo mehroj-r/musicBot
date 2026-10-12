@@ -14,7 +14,7 @@ jobs:
         with:
           token: ${{ secrets.PAT }}
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.0
 
       - name: Upgrade yt-dlp
         id: upgrade
