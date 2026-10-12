@@ -146,3 +146,30 @@ def test_progress_hooks_report_stages():
     on_postprocess({"status": "started", "postprocessor": "MoveFiles"})
 
     assert reports == [("download", 0.25), ("download", 0.5), ("download", None), ("convert", None)]
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://music.yandex.ru/album/4766/track/139305800?utm_source=share", "139305800"),
+        ("https://music.yandex.com/track/4878838", "4878838"),
+        ("https://music.yandex.ru/album/4766", None),
+    ],
+)
+def test_identify_yandex_music_with_our_extractor(url, expected):
+    key = ("YandexMusic", expected) if expected else None
+    assert Downloader(None, 180).identify(url) == key
+
+
+@pytest.mark.parametrize(
+    ("url", "reason"),
+    [
+        ("https://music.yandex.ru/album/4766", "Only single tracks"),
+        ("https://music.yandex.ru/users/someone/playlists/3", "Only single tracks"),
+        ("https://music.yandex.ru/track/4878838", "an admin needs to sign in with /yandex"),
+    ],
+)
+async def test_yandex_music_links_checked_before_downloading(tmp_path: Path, url, reason):
+    # Not signed in: no token to download with
+    with pytest.raises(DownloadRejected, match=reason):
+        await Downloader(None, 180).download(url, tmp_path, AudioFormat.M4A)

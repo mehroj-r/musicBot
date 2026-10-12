@@ -1,10 +1,17 @@
 import asyncio
+import base64
+import hashlib
+import hmac
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
 import aiohttp
+from yt_dlp.extractor.common import InfoExtractor
+from yt_dlp.networking.exceptions import HTTPError
+from yt_dlp.utils import ExtractorError, float_or_none, int_or_none
 
 from musicbot.db.base import utcnow
 from musicbot.db.database import Database
@@ -19,6 +26,12 @@ API_URL = "https://api.music.yandex.net"
 CLIENT_ID = "23cabbbdc6cd418abb4b39c32c41195d"
 CLIENT_SECRET = "53bc75238f0c4d08a118e51fe9203300"
 MUSIC_CLIENT = "YandexMusicAndroid/24026191"
+# get-file-info requests are signed with the desktop app's key, which Yandex checks against
+# the client header
+FILE_INFO_CLIENT = "YandexMusicDesktopAppWindows/5.95.0"
+FILE_INFO_SIGN_KEY = b"kzqU4XhfCaY6B6JTHODeq5"
+# Extension and codec of the files Yandex Music serves unencrypted, by its codec name
+FILE_CODECS = {"aac-mp4": ("m4a", "aac"), "he-aac-mp4": ("m4a", "aac"), "mp3": ("mp3", "mp3")}
 # How the sign-in is listed among the account's devices at id.yandex.ru
 DEVICE_NAME = "Music Bot (Telegram)"
 SERVICE = "yandex_music"
@@ -237,3 +250,123 @@ class YandexAuth:
         except YandexError as e:
             logger.warning("Couldn't revoke the Yandex Music token: %s", e)
         logger.info("Signed out of Yandex Music")
+
+
+def file_info_sign(
+    timestamp: int, track_id: str, codecs: list[str], quality: str, transport: str
+) -> str:
+    message = f"{timestamp}{track_id}{quality}{''.join(codecs)}{transport}"
+    digest = hmac.new(FILE_INFO_SIGN_KEY, message.encode(), hashlib.sha256).digest()
+    # Yandex expects the base64 signature without its last character
+    return base64.b64encode(digest).decode()[:-1]
+
+
+def cover_url(cover_uri: str) -> str:
+    # Covers come as "avatars.yandex.net/get-music-content/.../%%", %% being the size
+    url = cover_uri.replace("%%", "1000x1000")
+    return url if "://" in url else f"https://{url}"
+
+
+class YandexMusicIE(InfoExtractor):
+    """
+    Single Yandex Music tracks through the mobile API, with the bot's token passed as the
+    extractor argument ``yandexmusic:token``. Stands in for yt-dlp's own Yandex Music
+    extractors, whose web API no longer works.
+    """
+
+    IE_NAME = "yandexmusic"
+    _VALID_URL = r"https?://music\.yandex\.[a-z]+/(?:album/\d+/)?track/(?P<id>\d+)"
+
+    def _real_extract(self, url: str) -> dict[str, Any]:
+        track_id = self._match_id(url)
+        token = self._configuration_arg("token", [None], casesense=True)[0]
+        if not token:
+            raise ExtractorError("Not signed in to Yandex Music", expected=True)
+
+        track = self._call_api(f"tracks/{track_id}", track_id, token, "Downloading track info")[0]
+        if not track.get("available"):
+            raise ExtractorError("This track isn't available on Yandex Music", expected=True)
+
+        formats = {}
+        # Yandex picks the codec from the ones asked for: AAC when the track has it, else MP3
+        for codecs in (["aac-mp4", "mp3"], ["mp3"]):
+            if "mp3" in formats:
+                break
+            file = self._file_info(track_id, token, codecs)
+            if file.get("quality") == "preview":
+                raise ExtractorError(
+                    "Yandex Music only gives out a 30-second preview", expected=True
+                )
+            if file.get("codec") in FILE_CODECS and file.get("transport") == "raw":
+                ext, acodec = FILE_CODECS[file["codec"]]
+                formats[acodec] = {
+                    "format_id": f"{file['codec']}-{file.get('bitrate')}",
+                    "url": file.get("url") or file["urls"][0],
+                    "ext": ext,
+                    "acodec": acodec,
+                    "vcodec": "none",
+                    "abr": int_or_none(file.get("bitrate")),
+                }
+        if not formats:
+            raise ExtractorError("Yandex Music has no usable file for this track")
+
+        title = track["title"]
+        if track.get("version"):
+            title = f"{title} ({track['version']})"
+        album = (track.get("albums") or [{}])[0]
+        cover = track.get("coverUri") or album.get("coverUri")
+        return {
+            "id": track_id,
+            "title": title,
+            "track": title,
+            "artists": [
+                artist["name"] for artist in track.get("artists") or [] if artist.get("name")
+            ],
+            "album": album.get("title"),
+            "release_year": int_or_none(album.get("year")),
+            "duration": float_or_none(track.get("durationMs"), 1000),
+            "thumbnail": cover_url(cover) if cover else None,
+            "webpage_url": f"https://music.yandex.ru/track/{track_id}",
+            "formats": list(formats.values()),
+        }
+
+    def _call_api(
+        self,
+        path: str,
+        track_id: str,
+        token: str,
+        note: str,
+        query: dict[str, Any] | None = None,
+        client: str = MUSIC_CLIENT,
+    ) -> Any:
+        headers = {"Authorization": f"OAuth {token}", "X-Yandex-Music-Client": client}
+        try:
+            response = self._download_json(
+                f"{API_URL}/{path}", track_id, note, query=query or {}, headers=headers
+            )
+        except ExtractorError as e:
+            if isinstance(e.cause, HTTPError) and e.cause.status in (401, 403):
+                raise ExtractorError(
+                    "Yandex Music no longer accepts the bot's sign-in", expected=True
+                ) from e
+            raise
+        return response["result"]
+
+    def _file_info(self, track_id: str, token: str, codecs: list[str]) -> dict[str, Any]:
+        """
+        Where to download the track from, unencrypted, in one of ``codecs``.
+        """
+        timestamp = int(time.time())
+        quality, transport = "lossless", "raw"
+        query = {
+            "ts": timestamp,
+            "trackId": track_id,
+            "quality": quality,
+            "codecs": ",".join(codecs),
+            "transports": transport,
+            "sign": file_info_sign(timestamp, track_id, codecs, quality, transport),
+        }
+        result = self._call_api(
+            "get-file-info", track_id, token, "Downloading file info", query, FILE_INFO_CLIENT
+        )
+        return result["downloadInfo"]

@@ -88,10 +88,13 @@ def build_dispatcher(
 
 async def configure_bot(bot: Bot, settings: Settings) -> None:
     await bot.set_my_description(
-        "Music Assistant Bot: saves audio from YouTube and other sites to Telegram.\n\n"
+        "Music Assistant Bot: saves audio from YouTube, Yandex Music and other sites to "
+        "Telegram.\n\n"
         "Click /start to begin!"
     )
-    await bot.set_my_short_description("Saves audio from YouTube and other sites to Telegram.")
+    await bot.set_my_short_description(
+        "Saves audio from YouTube, Yandex Music and other sites to Telegram."
+    )
     await bot.set_my_commands(USER_COMMANDS)
     for admin_id in settings.admin_ids:
         try:
@@ -122,7 +125,7 @@ async def run(settings: Settings, database: Database) -> None:
     dispatcher = build_dispatcher(
         settings=settings,
         database=database,
-        downloader=Downloader(settings.cookies_file, settings.max_duration_minutes),
+        downloader=Downloader(settings.cookies_file, settings.max_duration_minutes, yandex),
         sender=AudioSender(bot, settings.max_upload_size, telethon),
         yandex=yandex,
     )

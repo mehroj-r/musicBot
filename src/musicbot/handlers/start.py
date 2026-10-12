@@ -7,8 +7,8 @@ from aiogram.types import Message
 router = Router()
 
 HELP_TEXT = (
-    "Send me a link from YouTube, YouTube Music, SoundCloud, Bandcamp or another supported "
-    "site, and I'll turn it into an audio file.\n\n"
+    "Send me a link from YouTube, YouTube Music, Yandex Music, SoundCloud, Bandcamp or another "
+    "supported site, and I'll turn it into an audio file.\n\n"
     "/start - Start the bot\n"
     "/settings - Choose the format, and a channel to post to\n"
     "/help - Show this message"
@@ -33,7 +33,8 @@ async def start_handler(message: Message, is_new_user: bool) -> None:
             f"Hi <b>{first_name}</b>! 👋\n\n"
             "I save tracks and podcasts as <b>audio files</b> with title, artist and cover art.\n\n"
             "<b>How it works:</b>\n"
-            "1️⃣ Send me a link from YouTube, YouTube Music, SoundCloud, Bandcamp or a similar site\n"
+            "1️⃣ Send me a link from YouTube, YouTube Music, Yandex Music, SoundCloud, Bandcamp "
+            "or a similar site\n"
             "2️⃣ I download and convert it to audio\n"
             "3️⃣ You get the audio here, or in your channel\n\n"
             "Use /settings to choose the format (M4A or MP3) or a channel to post to.\n\n"
