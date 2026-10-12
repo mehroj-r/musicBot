@@ -67,6 +67,18 @@ def message_link(chat_id: int, message_id: int) -> str:
     return f"https://t.me/c/{str(chat_id).removeprefix('-100')}/{message_id}"
 
 
+async def confirm_posted(message: Message, sent: SentAudio, title: str, channel: str) -> None:
+    """
+    Tell the user where the audio went, as a new message: their link is deleted next, and a
+    reply to it would show up as a reply to a deleted message.
+    """
+    link = message_link(sent.chat_id, sent.message_id)
+    await message.answer(
+        f'✅ <b>{title}</b> was posted to <a href="{link}">{channel}</a>.',
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
+    )
+
+
 async def send_cached(
     url: str,
     destination: int,
@@ -117,11 +129,7 @@ async def download_handler(
     if cached := await send_cached(url, destination, db_user, database, downloader, sender):
         sent, title = cached
         if db_user.channel_id:
-            link = message_link(sent.chat_id, sent.message_id)
-            await message.answer(
-                f'✅ <b>{title}</b> was posted to <a href="{link}">{channel}</a>.',
-                link_preview_options=LinkPreviewOptions(is_disabled=True),
-            )
+            await confirm_posted(message, sent, title, channel)
         await message.delete()
         return
 
@@ -176,12 +184,8 @@ async def download_handler(
         await save_cached(session, audio.track, db_user.audio_format, sent)
 
     if db_user.channel_id:
-        link = message_link(sent.chat_id, sent.message_id)
-        await status.edit_text(
-            f'✅ <b>{title}</b> was posted to <a href="{link}">{channel}</a>.',
-            link_preview_options=LinkPreviewOptions(is_disabled=True),
-        )
-    else:
-        # The audio itself is the answer; tidy the chat around it
-        await status.delete()
+        await confirm_posted(message, sent, title, channel)
+    # The status replies to the user's link; tidy both away (without a channel, the audio
+    # itself is the answer)
+    await status.delete()
     await message.delete()
