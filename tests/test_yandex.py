@@ -1,26 +1,35 @@
 import asyncio
+import io
 from dataclasses import dataclass, field
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
+from mutagen.mp4 import MP4
+from PIL import Image
+from yt_dlp.utils import DownloadError
 
+from musicbot.config import AudioFormat
 from musicbot.db.base import utcnow
 from musicbot.db.database import Database
 from musicbot.db.tokens import get_token, save_token
 from musicbot.handlers import yandex as yandex_handlers
 from musicbot.handlers.yandex import YandexCallback
+from musicbot.services.downloader import Downloader, describe_error
 from musicbot.services.yandex import (
+    FILE_INFO_CLIENT,
     SERVICE,
     Account,
     DeviceCode,
     SignInStatus,
     YandexAuth,
     YandexError,
+    file_info_sign,
 )
-from tests.conftest import ADMIN_ID, Harness
+from tests.conftest import ADMIN_ID, Harness, make_audio_file
 
 YEAR = 365 * 24 * 3600
 PENDING = {"error": "authorization_pending", "error_description": "User has not yet authorized"}
@@ -39,6 +48,12 @@ class FakeYandexServer:
     # Account status by token; any other token is rejected
     accounts: dict[str, dict[str, Any]] = field(default_factory=dict)
     requests: list[tuple[str, dict[str, str]]] = field(default_factory=list)
+    # Track JSON by ID, and each track's files: codec -> (audio file, quality)
+    tracks: dict[str, dict[str, Any]] = field(default_factory=dict)
+    files: dict[str, dict[str, tuple[Path, str]]] = field(default_factory=dict)
+    cover: bytes = b""
+    # Codecs of the audio files downloaded
+    downloads: list[str] = field(default_factory=list)
 
     def forms(self, path: str) -> list[dict[str, str]]:
         return [form for request_path, form in self.requests if request_path == path]
@@ -69,17 +84,65 @@ class FakeYandexServer:
             await record(request)
             return web.json_response({"status": "ok"})
 
+        def account(request: web.Request) -> dict[str, Any] | None:
+            return self.accounts.get(
+                request.headers.get("Authorization", "").removeprefix("OAuth ")
+            )
+
+        def unauthorized() -> web.Response:
+            return web.json_response({"status": 401, "error": "Unauthorized"}, status=401)
+
         async def account_status(request: web.Request) -> web.Response:
-            token = request.headers.get("Authorization", "").removeprefix("OAuth ")
-            if token not in self.accounts:
-                return web.json_response({"status": 401, "error": "Unauthorized"}, status=401)
-            return web.json_response({"result": self.accounts[token]})
+            if not account(request):
+                return unauthorized()
+            return web.json_response({"result": account(request)})
+
+        async def track(request: web.Request) -> web.Response:
+            if not account(request):
+                return unauthorized()
+            return web.json_response({"result": [self.tracks[request.match_info["track_id"]]]})
+
+        async def file_info(request: web.Request) -> web.Response:
+            if not account(request):
+                return unauthorized()
+            query = request.query
+            codecs = query["codecs"].split(",")
+            sign = file_info_sign(
+                int(query["ts"]), query["trackId"], codecs, query["quality"], query["transports"]
+            )
+            client = request.headers.get("X-Yandex-Music-Client")
+            if (query["sign"], client) != (sign, FILE_INFO_CLIENT):
+                return web.json_response({"error": "Bad sign"}, status=400)
+
+            track_files = self.files[query["trackId"]]
+            codec = next(codec for codec in codecs if codec in track_files)
+            info = {
+                "trackId": query["trackId"],
+                "quality": track_files[codec][1],
+                "codec": codec,
+                "bitrate": 192,
+                "transport": "raw",
+                "urls": [f"{self.url}/files/{query['trackId']}/{codec}"],
+            }
+            return web.json_response({"result": {"downloadInfo": info}})
+
+        async def audio_file(request: web.Request) -> web.FileResponse:
+            track_id, codec = request.match_info["track_id"], request.match_info["codec"]
+            self.downloads.append(codec)
+            return web.FileResponse(self.files[track_id][codec][0])
+
+        async def cover(request: web.Request) -> web.Response:
+            return web.Response(body=self.cover, content_type="image/jpeg")
 
         app = web.Application()
         app.router.add_post("/device/code", device_code)
         app.router.add_post("/token", token)
         app.router.add_post("/revoke_token", revoke)
         app.router.add_get("/account/status", account_status)
+        app.router.add_get("/tracks/{track_id}", track)
+        app.router.add_get("/get-file-info", file_info)
+        app.router.add_get("/files/{track_id}/{codec}", audio_file)
+        app.router.add_get("/cover/{size}", cover)
         return app
 
 
@@ -317,3 +380,114 @@ async def test_sign_out(harness: Harness):
 
     assert harness.yandex.signed_out
     assert "Not signed in" in calls.last("EditMessageText").text
+
+
+def test_file_info_sign_matches_the_yandex_music_library():
+    # Computed with yandex-music 3.2.2's get_file_info_sign
+    sign = file_info_sign(1700000000, "139305800", ["aac-mp4", "mp3"], "lossless", "raw")
+    assert sign == "adM5BHivWHHfAo8BG1HwViM1XZy6C0IuiT0WuA4XCA4"
+
+
+class StaticToken:
+    def __init__(self, token: str | None) -> None:
+        self._token = token
+
+    async def token(self) -> str | None:
+        return self._token
+
+
+def track_json(track_id: str, url: str, **overrides: Any) -> dict[str, Any]:
+    return {
+        "id": track_id,
+        "title": "Bohemian Rhapsody",
+        "version": "Remastered 2011",
+        "available": True,
+        "durationMs": 1000,
+        "artists": [{"name": "Queen"}, {"name": "<Guest>"}],
+        "albums": [
+            {"id": 9, "title": "A Night at the Opera", "year": 1975, "coverUri": f"{url}/cover/%%"}
+        ],
+        **overrides,
+    }
+
+
+@pytest.fixture
+def yandex_api(yandex_server: FakeYandexServer, monkeypatch, tmp_path: Path) -> FakeYandexServer:
+    """
+    The fake Yandex Music API with track 1 in AAC and MP3, and track 2 in MP3 only.
+    """
+    monkeypatch.setattr("musicbot.services.yandex.API_URL", yandex_server.url)
+    yandex_server.accounts = {"token-1": STATUS}
+
+    aac = make_audio_file(tmp_path / "song.m4a", ["-c:a", "aac", "-b:a", "192k"])
+    mp3 = make_audio_file(tmp_path / "song.mp3", ["-c:a", "libmp3lame", "-b:a", "192k"])
+    cover = io.BytesIO()
+    Image.new("RGB", (1000, 1000), "red").save(cover, "JPEG")
+    yandex_server.cover = cover.getvalue()
+
+    for track_id in ("1", "2"):
+        yandex_server.tracks[track_id] = track_json(track_id, yandex_server.url)
+    yandex_server.files["1"] = {"aac-mp4": (aac, "nq"), "mp3": (mp3, "nq")}
+    yandex_server.files["2"] = {"mp3": (mp3, "nq")}
+    return yandex_server
+
+
+async def download(tmp_path: Path, url: str, audio_format: AudioFormat, token: str = "token-1"):
+    job = tmp_path / "job"
+    job.mkdir()
+    return await Downloader(None, 180, StaticToken(token)).download(url, job, audio_format)
+
+
+async def test_yandex_track_as_m4a_keeps_its_aac(yandex_api: FakeYandexServer, tmp_path: Path):
+    audio = await download(tmp_path, "https://music.yandex.ru/album/9/track/1", AudioFormat.M4A)
+
+    assert yandex_api.downloads == ["aac-mp4"]
+    track = audio.track
+    assert (track.source, track.source_id, track.duration) == ("YandexMusic", "1", 1)
+    assert track.title == "Bohemian Rhapsody (Remastered 2011)"
+    assert track.artist == "Queen, <Guest>"
+    assert audio.audio_path.suffix == ".m4a"
+    tags = MP4(audio.audio_path).tags
+    assert tags["\xa9nam"] == ["Bohemian Rhapsody (Remastered 2011)"]
+    assert "covr" in tags
+    assert audio.thumbnail_path is not None
+
+
+async def test_yandex_track_as_mp3_is_its_own_mp3(yandex_api: FakeYandexServer, tmp_path: Path):
+    audio = await download(tmp_path, "https://music.yandex.com/track/1", AudioFormat.MP3)
+
+    assert yandex_api.downloads == ["mp3"]
+    assert audio.audio_path.suffix == ".mp3"
+
+
+async def test_mp3_only_yandex_track_is_converted_for_m4a(
+    yandex_api: FakeYandexServer, tmp_path: Path
+):
+    audio = await download(tmp_path, "https://music.yandex.ru/track/2", AudioFormat.M4A)
+
+    assert yandex_api.downloads == ["mp3"]
+    assert MP4(audio.audio_path).info.codec.startswith("mp4a")
+
+
+@pytest.mark.parametrize(
+    ("change", "expected"),
+    [
+        ({"quality": "preview"}, "30-second preview"),
+        ({"token": "revoked"}, "no longer accepts the bot's sign-in"),
+        ({"available": False}, "isn't available on Yandex Music"),
+    ],
+)
+async def test_yandex_download_failures_are_explained(
+    yandex_api: FakeYandexServer, tmp_path: Path, change: dict[str, Any], expected: str
+):
+    if "quality" in change:
+        yandex_api.files["1"] = {"mp3": (yandex_api.files["1"]["mp3"][0], change["quality"])}
+    if "available" in change:
+        yandex_api.tracks["1"]["available"] = change["available"]
+
+    with pytest.raises(DownloadError) as error:
+        url = "https://music.yandex.ru/track/1"
+        await download(tmp_path, url, AudioFormat.M4A, change.get("token", "token-1"))
+
+    assert expected in describe_error(error.value)
+    assert yandex_api.downloads == []

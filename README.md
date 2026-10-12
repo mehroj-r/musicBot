@@ -1,6 +1,7 @@
 # Music Bot (Telegram)
 
-A private Telegram bot that turns links from YouTube, YouTube Music, SoundCloud, Bandcamp and
+A private Telegram bot that turns links from YouTube, YouTube Music, Yandex Music, SoundCloud,
+Bandcamp and
 [other sites supported by yt-dlp](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)
 into tagged audio files, sent back in the chat or posted to the user's channel.
 
@@ -9,6 +10,8 @@ into tagged audio files, sent back in the chat or posted to the user's channel.
 - Per-user `/settings`: M4A (default, no re-encoding) or MP3, and an optional channel to post to.
 - Downloads audio with `yt-dlp`, including YouTube's JavaScript challenges (via Deno), and
   shows the progress while it works.
+- Downloads Yandex Music tracks with an account an admin signs in from Telegram
+  (see [Yandex Music](#yandex-music)).
 - Sends tracks that were already uploaded again instantly, without downloading them, from a
   cache of Telegram file IDs (per track and format).
 - Writes title, artist and square cover art into the file; sends a proper Telegram thumbnail.
@@ -94,8 +97,14 @@ The last export stays in `~/.local/share/musicbot/youtube-cookies.txt`;
 `--upload-only` uploads it again, for example to a second server.
 
 ## Yandex Music
-The bot downloads from Yandex Music with an account that has Yandex Plus; without Plus, Yandex
-only gives out 30-second previews. To sign in, an admin sends `/yandex` and taps **Sign in**:
+Send a link to a single track: `music.yandex.ru/album/…/track/…` or `music.yandex.ru/track/…`,
+on any of Yandex's domains (albums, playlists and artists aren't supported). M4A gets Yandex
+Music's AAC file as it is and MP3 its MP3 file, both 192 kbps on the accounts tested; tracks that
+only exist as MP3 are converted for M4A. yt-dlp's own Yandex Music support relies on a web API
+that no longer works, so the bot uses its own extractor on the mobile API instead.
+
+The bot downloads with an account that has Yandex Plus; without Plus, Yandex only gives out
+30-second previews. To sign in, an admin sends `/yandex` and taps **Sign in**:
 
 1. The bot replies with a code. Open [ya.ru/device](https://ya.ru/device) on any device, sign in
    with the Yandex account (a secondary one with Plus is safest), and enter the code.
@@ -164,6 +173,6 @@ src/musicbot/
   access.py        # access requests and admin notifications
   handlers/        # /start, /help, admin commands, /yandex, /settings, link downloads, fallback
   middlewares.py   # registers users and checks their access
-  services/        # yt-dlp downloads, artwork and tags, uploads, Yandex Music sign-in
+  services/        # yt-dlp downloads, artwork and tags, uploads, Yandex Music
 tests/             # pytest suite
 ```

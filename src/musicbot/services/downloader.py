@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -14,14 +15,18 @@ from yt_dlp.utils import DownloadError, sanitize_filename
 
 from musicbot.config import AudioFormat
 from musicbot.services.media import make_artwork, write_tags
+from musicbot.services.yandex import YandexAuth, YandexMusicIE
 
 logger = logging.getLogger(__name__)
 
 FORMAT_SELECTORS = {
-    # Prefer YouTube's AAC stream so the M4A can be remuxed instead of re-encoded
+    # Prefer an AAC stream (YouTube's, Yandex Music's) so the M4A is remuxed, not re-encoded
     AudioFormat.M4A: "bestaudio[ext=m4a]/bestaudio/best",
-    AudioFormat.MP3: "bestaudio/best",
+    # Likewise an MP3 where the site has one (Yandex Music, SoundCloud)
+    AudioFormat.MP3: "bestaudio[ext=mp3]/bestaudio/best",
 }
+
+YANDEX_MUSIC_LINK = re.compile(r"https?://music\.yandex\.[a-z]+/", re.IGNORECASE)
 
 
 # Called from yt-dlp's worker thread with the stage ("download" or "convert") and,
@@ -137,6 +142,13 @@ def describe_error(error: Exception) -> str:
         ("private video", "This video is private."),
         ("confirm your age", "This video is age-restricted."),
         ("not a bot", "YouTube is blocking the server right now. Please try again later."),
+        (
+            "no longer accepts the bot's sign-in",
+            "Yandex Music no longer accepts the bot's sign-in. An admin needs to sign in again "
+            "with /yandex.",
+        ),
+        ("30-second preview", "Yandex Music only gives the bot a 30-second preview of this track."),
+        ("isn't available on yandex music", "This track isn't available on Yandex Music."),
         ("not available in your country", "This video is not available in the server's region."),
         ("live event", "Live streams can't be downloaded."),
         ("unsupported url", "This link is not supported."),
@@ -168,10 +180,24 @@ def progress_hooks(on_progress: ProgressCallback) -> tuple[list, list]:
 
 
 class Downloader:
-    def __init__(self, cookies_file: Path | None, max_duration_minutes: int) -> None:
+    def __init__(
+        self,
+        cookies_file: Path | None,
+        max_duration_minutes: int,
+        yandex: YandexAuth | None = None,
+    ) -> None:
         self.cookies_file = cookies_file
         self.max_duration = max_duration_minutes * 60
-        self._extractors = [ie for ie in gen_extractor_classes() if ie.ie_key() != "Generic"]
+        self.yandex = yandex
+        # The same extractors downloads use: ours for Yandex Music instead of yt-dlp's
+        self._extractors = [
+            YandexMusicIE,
+            *(
+                ie
+                for ie in gen_extractor_classes()
+                if ie.ie_key() != "Generic" and not ie.IE_NAME.startswith("yandexmusic:")
+            ),
+        ]
 
         if cookies_file and not (cookies_file.is_file() and os.access(cookies_file, os.R_OK)):
             logger.warning("Cookies file %s is missing or unreadable; ignoring it", cookies_file)
@@ -207,7 +233,10 @@ class Downloader:
         Download the audio behind ``url`` into ``work_dir`` and tag it.
         The caller owns ``work_dir`` and removes it afterwards.
         """
-        info = await asyncio.to_thread(self._download, url, work_dir, audio_format, on_progress)
+        yandex_token = await self._yandex_token(url)
+        info = await asyncio.to_thread(
+            self._download, url, work_dir, audio_format, on_progress, yandex_token
+        )
         track = track_from_info(info)
         audio_path = Path(info["requested_downloads"][0]["filepath"])
 
@@ -226,18 +255,39 @@ class Downloader:
         cover_path, thumbnail_path = await asyncio.to_thread(finish)
         return DownloadedTrack(track, audio_format, audio_path, cover_path, thumbnail_path)
 
+    async def _yandex_token(self, url: str) -> str | None:
+        """
+        The token to download a Yandex Music link with; None for other links.
+        """
+        if not YANDEX_MUSIC_LINK.match(url):
+            return None
+        if not YandexMusicIE.suitable(url):
+            raise DownloadRejected(
+                "Only single tracks can be downloaded from Yandex Music. Send a link to a track."
+            )
+        token = await self.yandex.token() if self.yandex else None
+        if token is None:
+            raise DownloadRejected(
+                "Yandex Music isn't set up yet: an admin needs to sign in with /yandex."
+            )
+        return token
+
     def _download(
         self,
         url: str,
         work_dir: Path,
         audio_format: AudioFormat,
         on_progress: ProgressCallback | None,
+        yandex_token: str | None = None,
     ) -> dict[str, Any]:
         options = self._options(work_dir, audio_format)
         if on_progress:
             options["progress_hooks"], options["postprocessor_hooks"] = progress_hooks(on_progress)
+        if yandex_token:
+            options["extractor_args"] = {"yandexmusic": {"token": [yandex_token]}}
 
         with YoutubeDL(options) as ydl:
+            ydl.add_info_extractor(YandexMusicIE())
             # Check the metadata first, then download from the same extraction
             info = ydl.extract_info(url, download=False)
             self._check(info)
@@ -263,8 +313,9 @@ class Downloader:
             "noplaylist": True,
             # Don't resolve every entry of a playlist link just to refuse it
             "extract_flat": "in_playlist",
-            # Named sites only: the generic extractor would fetch arbitrary URLs
-            "allowed_extractors": ["default", "-generic"],
+            # Named sites only: the generic extractor would fetch arbitrary URLs. yt-dlp's
+            # Yandex Music extractors use a web API that no longer works; ours is added instead
+            "allowed_extractors": ["default", "-generic", "-yandexmusic:.*"],
             "outtmpl": {
                 "default": str(work_dir / "audio.%(ext)s"),
                 "thumbnail": str(work_dir / "cover-source.%(ext)s"),
@@ -274,7 +325,9 @@ class Downloader:
                 {
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": str(audio_format),
-                    **({"preferredquality": "192"} if audio_format is AudioFormat.MP3 else {}),
+                    # Only applies when the audio has to be re-encoded, e.g. a Yandex Music
+                    # track that only exists as MP3 for an M4A user
+                    "preferredquality": "192",
                 }
             ],
         }
