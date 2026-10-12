@@ -8,6 +8,7 @@ from aiogram import Bot
 from telethon.tl.types import DocumentAttributeAudio, DocumentAttributeFilename
 
 from musicbot.config import MB, AudioFormat
+from musicbot.db.models import CachedTrack
 from musicbot.services.downloader import DownloadedTrack, Track
 from musicbot.services.uploader import AudioSender, SentAudio, TelethonUploader
 from tests.conftest import BOT_TOKEN, FakeSession
@@ -102,3 +103,36 @@ async def test_telethon_upload_sends_audio_attributes(tmp_path):
     )
     assert isinstance(filename_attribute, DocumentAttributeFilename)
     assert filename_attribute.file_name == "Artist - Title.m4a"
+
+
+def cached_track(file_id: str | None) -> CachedTrack:
+    return CachedTrack(
+        source="Youtube",
+        source_id="abc",
+        audio_format=AudioFormat.M4A,
+        title="Title",
+        artist="Artist",
+        file_id=file_id,
+        chat_id=-100555,
+        message_id=12,
+    )
+
+
+async def test_resend_reuses_the_file_id(bot, session):
+    sender = AudioSender(bot, max_size=50 * MB)
+
+    sent = await sender.resend(7, cached_track("file-id"), caption="x")
+
+    request = session.last("SendAudio")
+    assert (request.chat_id, request.audio, request.caption) == (7, "file-id", "x")
+    assert sent.file_id == "file-id"
+
+
+async def test_resend_copies_the_first_post_without_a_file_id(bot, session):
+    sender = AudioSender(bot, max_size=50 * MB)
+
+    sent = await sender.resend(7, cached_track(None), caption="x")
+
+    request = session.last("CopyMessage")
+    assert (request.chat_id, request.from_chat_id, request.message_id) == (7, -100555, 12)
+    assert sent.chat_id == 7 and sent.file_id is None

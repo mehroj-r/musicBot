@@ -2,11 +2,14 @@ import asyncio
 import logging
 import os
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from yt_dlp import YoutubeDL
+from yt_dlp.extractor import gen_extractor_classes
 from yt_dlp.utils import DownloadError, sanitize_filename
 
 from musicbot.config import AudioFormat
@@ -19,6 +22,11 @@ FORMAT_SELECTORS = {
     AudioFormat.M4A: "bestaudio[ext=m4a]/bestaudio/best",
     AudioFormat.MP3: "bestaudio/best",
 }
+
+
+# Called from yt-dlp's worker thread with the stage ("download" or "convert") and,
+# while downloading, the fraction done when the size is known
+ProgressCallback = Callable[[str, float | None], None]
 
 
 class YtDlpLogger:
@@ -142,23 +150,64 @@ def describe_error(error: Exception) -> str:
     return "Could not download this link."
 
 
+def progress_hooks(on_progress: ProgressCallback) -> tuple[list, list]:
+    """
+    Translate yt-dlp's download and post-processing hooks into ``on_progress`` calls.
+    """
+
+    def on_download(status: dict[str, Any]) -> None:
+        if status["status"] == "downloading":
+            total = status.get("total_bytes") or status.get("total_bytes_estimate")
+            on_progress("download", status["downloaded_bytes"] / total if total else None)
+
+    def on_postprocess(status: dict[str, Any]) -> None:
+        if status["status"] == "started" and status["postprocessor"] == "ExtractAudio":
+            on_progress("convert", None)
+
+    return [on_download], [on_postprocess]
+
+
 class Downloader:
     def __init__(self, cookies_file: Path | None, max_duration_minutes: int) -> None:
         self.cookies_file = cookies_file
         self.max_duration = max_duration_minutes * 60
+        self._extractors = [ie for ie in gen_extractor_classes() if ie.ie_key() != "Generic"]
 
         if cookies_file and not (cookies_file.is_file() and os.access(cookies_file, os.R_OK)):
             logger.warning("Cookies file %s is missing or unreadable; ignoring it", cookies_file)
             self.cookies_file = None
 
+    def identify(self, url: str) -> tuple[str, str] | None:
+        """
+        Work out which track a link points to without any network request, the way yt-dlp
+        checks its download archive. Not every site allows this.
+
+        :return: The extractor key and track ID, matching ``Track.source`` and ``source_id``.
+        """
+        extractor = next((ie for ie in self._extractors if ie.suitable(url)), None)
+        if extractor is None:
+            return None
+        source, source_id = extractor.ie_key(), extractor.get_temp_id(url)
+
+        # A watch link inside a playlist or Mix: with noplaylist only the video is downloaded
+        if source == "YoutubeTab":
+            video_ids = parse_qs(urlparse(url).query).get("v")
+            source, source_id = ("Youtube", video_ids[0]) if video_ids else (source, None)
+
+        return (source, source_id) if source_id else None
+
     async def download(
-        self, url: str, work_dir: Path, audio_format: AudioFormat
+        self,
+        url: str,
+        work_dir: Path,
+        audio_format: AudioFormat,
+        on_progress: ProgressCallback | None = None,
     ) -> DownloadedTrack:
         """
         Download the audio behind ``url`` into ``work_dir`` and tag it.
         The caller owns ``work_dir`` and removes it afterwards.
         """
-        info = await asyncio.to_thread(self._download, url, work_dir, audio_format)
+        info = await asyncio.to_thread(self._download, url, work_dir, audio_format, on_progress)
         track = track_from_info(info)
         audio_path = Path(info["requested_downloads"][0]["filepath"])
 
@@ -177,8 +226,18 @@ class Downloader:
         cover_path, thumbnail_path = await asyncio.to_thread(finish)
         return DownloadedTrack(track, audio_format, audio_path, cover_path, thumbnail_path)
 
-    def _download(self, url: str, work_dir: Path, audio_format: AudioFormat) -> dict[str, Any]:
-        with YoutubeDL(self._options(work_dir, audio_format)) as ydl:
+    def _download(
+        self,
+        url: str,
+        work_dir: Path,
+        audio_format: AudioFormat,
+        on_progress: ProgressCallback | None,
+    ) -> dict[str, Any]:
+        options = self._options(work_dir, audio_format)
+        if on_progress:
+            options["progress_hooks"], options["postprocessor_hooks"] = progress_hooks(on_progress)
+
+        with YoutubeDL(options) as ydl:
             # Check the metadata first, then download from the same extraction
             info = ydl.extract_info(url, download=False)
             self._check(info)

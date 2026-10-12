@@ -8,6 +8,7 @@ from telethon import TelegramClient
 from telethon.tl.types import DocumentAttributeAudio, DocumentAttributeFilename
 
 from musicbot.config import MB
+from musicbot.db.models import CachedTrack
 from musicbot.services.downloader import DownloadedTrack
 
 logger = logging.getLogger(__name__)
@@ -88,3 +89,26 @@ class AudioSender:
         )
         file_id = message.audio.file_id if message.audio else None
         return SentAudio(chat_id=message.chat.id, message_id=message.message_id, file_id=file_id)
+
+    async def resend(self, chat_id: int, cached: CachedTrack, caption: str) -> SentAudio:
+        """
+        Send a track uploaded before, without uploading it again.
+        Raises TelegramAPIError when the file or the first post is gone.
+        """
+        if cached.file_id:
+            message = await self.bot.send_audio(
+                chat_id=chat_id, audio=cached.file_id, caption=caption
+            )
+            file_id = message.audio.file_id if message.audio else cached.file_id
+            return SentAudio(
+                chat_id=message.chat.id, message_id=message.message_id, file_id=file_id
+            )
+
+        # Uploaded with Telethon: copy the first post instead
+        copied = await self.bot.copy_message(
+            chat_id=chat_id,
+            from_chat_id=cached.chat_id,
+            message_id=cached.message_id,
+            caption=caption,
+        )
+        return SentAudio(chat_id=chat_id, message_id=copied.message_id, file_id=None)
