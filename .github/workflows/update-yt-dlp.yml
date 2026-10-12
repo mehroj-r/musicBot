@@ -16,22 +16,33 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10.3.0
-
-      - name: Upgrade yt-dlp
-        id: upgrade
+      # yt-dlp pins its yt-dlp-ejs version, so a new yt-dlp release is all there is to watch.
+      # PyPI rather than GitHub releases: uv installs from PyPI, which can lag the GitHub tag
+      - name: Check for a new release
+        id: check
         run: |
-          uv lock --upgrade-package yt-dlp --upgrade-package yt-dlp-ejs
-          if git diff --quiet uv.lock; then
-            echo "yt-dlp is already up to date." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "version=$(uv tree --frozen --package yt-dlp --depth 0 | awk 'NR==1 {print $2}')" >> "$GITHUB_OUTPUT"
+          locked=$(python3 -c 'import tomllib
+          lock = tomllib.load(open("uv.lock", "rb"))
+          print(next(p["version"] for p in lock["package"] if p["name"] == "yt-dlp"))')
+          latest=$(curl -fsS --retry 3 https://pypi.org/pypi/yt-dlp/json | jq -r .info.version)
+          echo "yt-dlp: $locked locked, $latest is the latest release." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$(printf '%s\n' "$locked" "$latest" | sort -V | tail -n 1)" != "$locked" ]; then
+            echo "version=$latest" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Commit and push
-        if: steps.upgrade.outputs.version
+      - uses: astral-sh/setup-uv@v10.3.0
+        if: steps.check.outputs.version
+
+      - name: Lock the new release
+        if: steps.check.outputs.version
         env:
-          VERSION: ${{ steps.upgrade.outputs.version }}
+          VERSION: ${{ steps.check.outputs.version }}
+        run: uv lock --upgrade-package "yt-dlp==$VERSION"
+
+      - name: Commit and push
+        if: steps.check.outputs.version
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -41,10 +52,10 @@ jobs:
       # Pushes made with GITHUB_TOKEN don't trigger workflows, but dispatching one does;
       # CI passing on master then triggers the deploy
       - name: Run CI on the update
-        if: steps.upgrade.outputs.version
+        if: steps.check.outputs.version
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.upgrade.outputs.version }}
+          VERSION: ${{ steps.check.outputs.version }}
         run: |
           gh workflow run ci.yml --ref "$GITHUB_REF_NAME"
           echo "Updated yt-dlp to $VERSION; CI and the deploy run next." >> "$GITHUB_STEP_SUMMARY"
