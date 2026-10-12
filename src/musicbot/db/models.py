@@ -69,3 +69,17 @@ class CachedTrack(TimestampMixin, Base):
     # The first post, copied when there is no file ID
     chat_id: Mapped[int] = mapped_column(BigInteger)
     message_id: Mapped[int] = mapped_column(BigInteger)
+
+
+class OAuthToken(TimestampMixin, Base):
+    """
+    A token the bot signed in with, one per service.
+    """
+
+    __tablename__ = "oauth_tokens"
+
+    # e.g. "yandex_music"
+    service: Mapped[str] = mapped_column(String(32), primary_key=True)
+    access_token: Mapped[str] = mapped_column(String(1024))
+    refresh_token: Mapped[str | None] = mapped_column(String(1024))
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime)

@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     cookies_file: Path | None = Field(
         default=None, validation_alias=AliasChoices("COOKIES_FILE", "COOKIE_FILE")
     )
+    # Used instead of signing in with /yandex
+    yandex_music_token: SecretStr | None = None
 
     # Downloads
     max_parallel_downloads: int = Field(default=2, ge=1)

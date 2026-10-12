@@ -30,6 +30,7 @@ from musicbot.db.database import Database
 from musicbot.db.users import set_allowed, update_user
 from musicbot.services.downloader import DownloadedTrack, Track
 from musicbot.services.uploader import SentAudio
+from musicbot.services.yandex import Account, DeviceCode, SignInStatus
 
 BOT_TOKEN = "123456:TEST-token"
 ADMIN_ID = 1
@@ -185,6 +186,33 @@ class FakeSender:
         )
 
 
+@dataclass
+class FakeYandex:
+    status_result: SignInStatus | None = None
+    code_error: Exception | None = None
+    # What waiting for the code ends with: the account signed in to, or an error
+    sign_in_result: Account | Exception = field(
+        default_factory=lambda: Account(login="music.fan", has_plus=True)
+    )
+    signed_out: bool = False
+
+    async def status(self) -> SignInStatus | None:
+        return self.status_result
+
+    async def request_code(self) -> DeviceCode:
+        if self.code_error:
+            raise self.code_error
+        return DeviceCode("device-secret", "abcd1234", "https://ya.ru/device", 300, 5)
+
+    async def wait_for_sign_in(self, code: DeviceCode) -> Account:
+        if isinstance(self.sign_in_result, Exception):
+            raise self.sign_in_result
+        return self.sign_in_result
+
+    async def sign_out(self) -> None:
+        self.signed_out = True
+
+
 class Harness:
     """
     Feeds updates through the real dispatcher with fake Telegram, downloader and uploader.
@@ -199,12 +227,14 @@ class Harness:
         self.database = database
         self.downloader = FakeDownloader()
         self.sender = FakeSender()
+        self.yandex = FakeYandex()
         self._update_ids = itertools.count(1)
         dispatcher.workflow_data.update(
             settings=settings,
             database=database,
             downloader=self.downloader,
             sender=self.sender,
+            yandex=self.yandex,
             # A fresh semaphore per test: asyncio primitives bind to the loop they first wait on
             download_slots=asyncio.Semaphore(settings.max_parallel_downloads),
         )
@@ -272,7 +302,11 @@ def dispatcher(tmp_path_factory):
     # Routers are module-level singletons, so the dispatcher is built once per session
     settings = make_settings(data_dir=tmp_path_factory.mktemp("data"))
     return build_dispatcher(
-        settings=settings, database=None, downloader=FakeDownloader(), sender=FakeSender()
+        settings=settings,
+        database=None,
+        downloader=FakeDownloader(),
+        sender=FakeSender(),
+        yandex=FakeYandex(),
     )
 
 

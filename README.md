@@ -50,6 +50,7 @@ All settings come from environment variables (or `.env`):
 | `API_ID`, `API_HASH` | unset | App credentials from [my.telegram.org](https://my.telegram.org), for large files |
 | `LOCAL_BOT_API_URL` | unset | URL of a local Bot API server, for large files |
 | `COOKIES_FILE` | unset | Netscape-format cookies for yt-dlp |
+| `YANDEX_MUSIC_TOKEN` | unset | Yandex Music OAuth token, used instead of signing in with `/yandex` |
 | `MAX_PARALLEL_DOWNLOADS` | `2` | Downloads running at once; more requests wait in line |
 | `MAX_DURATION_MINUTES` | `180` | Longest track the bot will download |
 | `DATA_DIR` | `data` | Where the database and Telethon session are stored |
@@ -59,6 +60,7 @@ All settings come from environment variables (or `.env`):
 - **Access:** when someone without access messages the bot, they get their user ID and every
   admin gets a request with **Allow** / **Ignore** buttons (at most once a day per person).
   Admins can also use `/allow USER_ID`, `/revoke USER_ID` and `/users`.
+- **Yandex Music:** admins sign the bot in with `/yandex` (see [Yandex Music](#yandex-music)).
 - **Format:** `/settings` switches between M4A (YouTube's original AAC, no re-encoding) and MP3.
 - **Destination:** audio comes back in the chat. To post it to a channel instead, tap
   **Post to a channel** in `/settings` and pick one you manage; Telegram adds the bot there as
@@ -90,6 +92,21 @@ scripts/refresh-youtube-cookies.sh
 
 The last export stays in `~/.local/share/musicbot/youtube-cookies.txt`;
 `--upload-only` uploads it again, for example to a second server.
+
+## Yandex Music
+The bot downloads from Yandex Music with an account that has Yandex Plus; without Plus, Yandex
+only gives out 30-second previews. To sign in, an admin sends `/yandex` and taps **Sign in**:
+
+1. The bot replies with a code. Open [ya.ru/device](https://ya.ru/device) on any device, sign in
+   with the Yandex account (a secondary one with Plus is safest), and enter the code.
+2. Within a few seconds the bot confirms the account and whether it has Plus.
+
+The token lasts a year and is renewed automatically a month before it expires; it is stored in
+the bot's database. `/yandex` shows who the bot is signed in as, and can sign in again or sign
+out (which also revokes the token at Yandex). The sign-in is listed as "Music Bot (Telegram)"
+among the account's devices at [id.yandex.ru](https://id.yandex.ru).
+
+To skip the sign-in, put a token in `YANDEX_MUSIC_TOKEN` instead; it is used as is and never renewed.
 
 ## Large files
 The cloud Bot API refuses uploads above 50 MB (about 36 minutes of MP3). The bot picks an
@@ -145,8 +162,8 @@ src/musicbot/
   config.py        # settings from the environment
   db/              # SQLAlchemy models, database setup, Alembic migrations
   access.py        # access requests and admin notifications
-  handlers/        # /start, /help, admin commands, /settings, link downloads, fallback
+  handlers/        # /start, /help, admin commands, /yandex, /settings, link downloads, fallback
   middlewares.py   # registers users and checks their access
-  services/        # yt-dlp downloads, artwork and tags, uploads
+  services/        # yt-dlp downloads, artwork and tags, uploads, Yandex Music sign-in
 tests/             # pytest suite
 ```
