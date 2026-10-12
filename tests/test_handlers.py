@@ -57,10 +57,17 @@ async def test_link_is_posted_to_the_users_channel(allowed: Harness):
     calls = await allowed.send(LINK)
 
     assert allowed.sender.calls[0][0] == CHANNEL_ID
-    confirmation = calls.last("EditMessageText").text
-    assert "posted to" in confirmation
-    assert 'href="https://t.me/c/1234567890/1"' in confirmation
-    assert "My &lt;Music&gt;" in confirmation
+    confirmation = calls.last("SendMessage")
+    assert "posted to" in confirmation.text
+    assert 'href="https://t.me/c/1234567890/1"' in confirmation.text
+    assert "My &lt;Music&gt;" in confirmation.text
+    # Not a reply: the user's link is deleted, which would leave a reply to a deleted message
+    assert confirmation.reply_parameters is None
+    assert calls.names()[-3:] == [
+        "SendMessage",  # the confirmation
+        "DeleteMessage",  # status
+        "DeleteMessage",  # the user's link
+    ]
 
 
 async def test_preferred_format_is_used(allowed: Harness):
