@@ -49,3 +49,13 @@ def test_missing_token_is_a_clear_error(monkeypatch):
     monkeypatch.delenv("BOT_TOKEN", raising=False)
     with pytest.raises(ValidationError, match="BOT_API_TOKEN"):
         Settings(_env_file=None)
+
+
+def test_empty_values_count_as_unset(monkeypatch):
+    # As left by .env.example: optional settings present but blank
+    for name in ("API_ID", "API_HASH", "ADMIN_IDS", "LOCAL_BOT_API_URL", "COOKIES_FILE"):
+        monkeypatch.setenv(name, "")
+    monkeypatch.setenv("BOT_API_TOKEN", "1:abc")
+    settings = Settings(_env_file=None)
+    assert (settings.api_id, settings.admin_ids, settings.cookies_file) == (None, [], None)
+    assert settings.upload_mode is UploadMode.BOT_API

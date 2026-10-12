@@ -28,7 +28,10 @@ class UploadMode(StrEnum):
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", validate_by_name=True)
+    # Empty values (e.g. "API_ID=" from .env.example) count as unset
+    model_config = SettingsConfigDict(
+        env_file=".env", env_ignore_empty=True, extra="ignore", validate_by_name=True
+    )
 
     # Telegram
     bot_token: SecretStr = Field(validation_alias=AliasChoices("BOT_API_TOKEN", "BOT_TOKEN"))
