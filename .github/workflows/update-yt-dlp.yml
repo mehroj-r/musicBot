@@ -5,14 +5,16 @@ on:
     - cron: "0 0 * * *" # Daily at midnight UTC
   workflow_dispatch:
 
+permissions:
+  # Push the updated lock file, then start CI on it
+  contents: write
+  actions: write
+
 jobs:
   update:
     runs-on: ubuntu-latest
     steps:
-      # Push with the PAT: pushes made with GITHUB_TOKEN don't trigger CI, and CI triggers the deploy
       - uses: actions/checkout@v7
-        with:
-          token: ${{ secrets.PAT }}
 
       - uses: astral-sh/setup-uv@v10.3.0
 
@@ -35,4 +37,14 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -am "chore: update yt-dlp to $VERSION"
           git push
+
+      # Pushes made with GITHUB_TOKEN don't trigger workflows, but dispatching one does;
+      # CI passing on master then triggers the deploy
+      - name: Run CI on the update
+        if: steps.upgrade.outputs.version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.upgrade.outputs.version }}
+        run: |
+          gh workflow run ci.yml --ref "$GITHUB_REF_NAME"
           echo "Updated yt-dlp to $VERSION; CI and the deploy run next." >> "$GITHUB_STEP_SUMMARY"

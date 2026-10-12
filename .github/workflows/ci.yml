@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: [master]
+  # Started by the yt-dlp update, whose push doesn't trigger CI by itself
+  workflow_dispatch:
 
 jobs:
   test:
