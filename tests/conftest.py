@@ -10,23 +10,36 @@ import pytest
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.base import BaseSession
+from aiogram.filters.callback_data import CallbackData
 from aiogram.methods import TelegramMethod
-from aiogram.types import Audio, Chat, Message, MessageEntity, Update, User
+from aiogram.types import (
+    Audio,
+    CallbackQuery,
+    Chat,
+    ChatShared,
+    Message,
+    MessageEntity,
+    Update,
+    User,
+)
 
 from musicbot.app import build_dispatcher
 from musicbot.config import AudioFormat, Settings
 from musicbot.db.database import Database
+from musicbot.db.users import set_allowed, update_user
 from musicbot.services.downloader import DownloadedTrack, Track
 from musicbot.services.uploader import SentAudio
 
 BOT_TOKEN = "123456:TEST-token"
+ADMIN_ID = 1
+USER_ID = 42
 CHANNEL_ID = -1001234567890
 # Bot API methods that answer with a Message; everything else gets True
 MESSAGE_METHODS = {"SendMessage", "EditMessageText", "SendAudio", "SendPhoto"}
 
 
 def make_settings(**overrides) -> Settings:
-    values = {"bot_token": BOT_TOKEN, "channel_id": CHANNEL_ID, **overrides}
+    values = {"bot_token": BOT_TOKEN, "admin_ids": [ADMIN_ID], **overrides}
     # Ignore any developer .env so tests only see what they set
     return Settings(_env_file=None, **values)
 
@@ -68,12 +81,19 @@ class FakeSession(BaseSession):
     def __init__(self) -> None:
         super().__init__()
         self.calls: list[TelegramMethod] = []
+        # Canned results by method name, e.g. {"GetChatMember": ChatMemberAdministrator(...)}
+        self.responses: dict[str, object] = {}
         self._ids = itertools.count(1000)
 
     # aiogram's BaseSession interface defines the timeout parameter
     async def make_request(self, bot: Bot, method: TelegramMethod, timeout: int | None = None):  # noqa: ASYNC109
         self.calls.append(method)
         name = type(method).__name__
+        if name in self.responses:
+            response = self.responses[name]
+            if isinstance(response, Exception):
+                raise response
+            return response
         if name not in MESSAGE_METHODS:
             return True
         audio = None
@@ -163,13 +183,25 @@ class Harness:
             download_slots=asyncio.Semaphore(settings.max_parallel_downloads),
         )
 
+    async def allow(self, user_id: int = USER_ID) -> None:
+        async with self.database.session() as session:
+            await set_allowed(session, user_id, True)
+
+    async def set_channel(self, user_id: int = USER_ID, channel_id: int = CHANNEL_ID) -> None:
+        async with self.database.session() as session:
+            await update_user(session, user_id, channel_id=channel_id, channel_title="My <Music>")
+
+    def calls_to(self, chat_id: int) -> list[TelegramMethod]:
+        return [call for call in self.session.calls if getattr(call, "chat_id", None) == chat_id]
+
     async def send(
         self,
-        text: str,
-        user_id: int = 42,
+        text: str | None = None,
+        user_id: int = USER_ID,
         first_name: str = "Test",
         chat_type: str = "private",
         entities: list[MessageEntity] | None = None,
+        chat_shared: ChatShared | None = None,
     ) -> FakeSession:
         self.session.calls.clear()
         message = Message(
@@ -179,8 +211,32 @@ class Harness:
             from_user=User(id=user_id, is_bot=False, first_name=first_name),
             text=text,
             entities=entities,
+            chat_shared=chat_shared,
         )
         update = Update(update_id=next(self._update_ids), message=message)
+        await self.dispatcher.feed_update(self.bot, update)
+        return self.session
+
+    async def press(self, data: CallbackData, user_id: int = USER_ID) -> FakeSession:
+        """
+        Press an inline button under a message the bot sent earlier, in bold "Old text".
+        """
+        self.session.calls.clear()
+        message = Message(
+            message_id=next(self._update_ids),
+            date=datetime.datetime.now(datetime.UTC),
+            chat=Chat(id=user_id, type="private"),
+            text="Old text",
+            entities=[MessageEntity(type="bold", offset=0, length=3)],
+        )
+        callback = CallbackQuery(
+            id=str(next(self._update_ids)),
+            from_user=User(id=user_id, is_bot=False, first_name="Presser"),
+            chat_instance="chat",
+            data=data.pack(),
+            message=message,
+        )
+        update = Update(update_id=next(self._update_ids), callback_query=callback)
         await self.dispatcher.feed_update(self.bot, update)
         return self.session
 
@@ -197,3 +253,12 @@ def dispatcher(tmp_path_factory):
 @pytest.fixture
 async def harness(dispatcher, settings, async_database) -> Harness:
     return Harness(dispatcher, settings, async_database)
+
+
+@pytest.fixture
+async def allowed(harness: Harness) -> Harness:
+    """
+    A harness whose default user already has access.
+    """
+    await harness.allow()
+    return harness

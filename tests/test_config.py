@@ -26,16 +26,26 @@ def test_local_bot_api_server_wins_over_telethon():
 def test_reads_existing_env_names(monkeypatch):
     # Names already used in deployed .env files keep working
     monkeypatch.setenv("BOT_API_TOKEN", "1:abc")
-    monkeypatch.setenv("CHANNEL_ID", "-100123")
     monkeypatch.setenv("COOKIE_FILE", "secrets/cookies.txt")
     settings = Settings(_env_file=None)
     assert settings.bot_token.get_secret_value() == "1:abc"
-    assert settings.channel_id == -100123
     assert str(settings.cookies_file) == "secrets/cookies.txt"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"), [("111", [111]), ("111, 222", [111, 222]), ("", []), ("[1,2]", None)]
+)
+def test_admin_ids_are_comma_separated(monkeypatch, raw, expected):
+    monkeypatch.setenv("ADMIN_IDS", raw)
+    if expected is None:
+        with pytest.raises(ValidationError):
+            make_settings(admin_ids=raw)
+        return
+    assert make_settings(admin_ids=raw).admin_ids == expected
 
 
 def test_missing_token_is_a_clear_error(monkeypatch):
     monkeypatch.delenv("BOT_API_TOKEN", raising=False)
     monkeypatch.delenv("BOT_TOKEN", raising=False)
     with pytest.raises(ValidationError, match="BOT_API_TOKEN"):
-        Settings(_env_file=None, channel_id=1)
+        Settings(_env_file=None)

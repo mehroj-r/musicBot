@@ -1,6 +1,6 @@
 from aiogram import F, Router
 
-from musicbot.handlers import download, fallback, start
+from musicbot.handlers import admin, download, fallback, settings, start
 
 
 def setup_routers() -> Router:
@@ -8,5 +8,7 @@ def setup_routers() -> Router:
     # Only talk in private chats; stay silent if someone adds the bot to a group
     router.message.filter(F.chat.type == "private")
     # The fallback must come last: it answers anything the others didn't handle
-    router.include_routers(start.router, download.router, fallback.router)
+    router.include_routers(
+        start.router, admin.router, settings.router, download.router, fallback.router
+    )
     return router

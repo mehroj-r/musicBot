@@ -10,7 +10,14 @@ HELP_TEXT = (
     "Send me a link from YouTube, YouTube Music, SoundCloud, Bandcamp or another supported "
     "site, and I'll turn it into an audio file.\n\n"
     "/start - Start the bot\n"
+    "/settings - Choose the format, and a channel to post to\n"
     "/help - Show this message"
+)
+ADMIN_HELP_TEXT = (
+    "\n\n<b>Admin</b>\n"
+    "/allow USER_ID - Give someone access\n"
+    "/revoke USER_ID - Take access away\n"
+    "/users - List who has access"
 )
 
 
@@ -27,7 +34,8 @@ async def start_handler(message: Message, is_new_user: bool) -> None:
             "<b>How it works:</b>\n"
             "1️⃣ Send me a link from YouTube, YouTube Music, SoundCloud, Bandcamp or a similar site\n"
             "2️⃣ I download and convert it to audio\n"
-            "3️⃣ The audio is posted to the channel\n\n"
+            "3️⃣ You get the audio here, or in your channel\n\n"
+            "Use /settings to choose the format (M4A or MP3) or a channel to post to.\n\n"
             "<i>Let's get started. Send me a link!</i>"
         )
     else:
@@ -41,5 +49,5 @@ async def start_handler(message: Message, is_new_user: bool) -> None:
 
 
 @router.message(Command("help"))
-async def help_handler(message: Message) -> None:
-    await message.reply(HELP_TEXT)
+async def help_handler(message: Message, is_admin: bool = False) -> None:
+    await message.reply(HELP_TEXT + ADMIN_HELP_TEXT if is_admin else HELP_TEXT)

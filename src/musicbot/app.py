@@ -6,16 +6,29 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand
+from aiogram.exceptions import TelegramAPIError
+from aiogram.types import BotCommand, BotCommandScopeChat
 
 from musicbot.config import MB, Settings, UploadMode
 from musicbot.db.database import Database
 from musicbot.handlers import setup_routers
-from musicbot.middlewares import UserMiddleware
+from musicbot.middlewares import AccessMiddleware, UserMiddleware
 from musicbot.services.downloader import Downloader
 from musicbot.services.uploader import AudioSender, TelethonUploader
 
 logger = logging.getLogger(__name__)
+
+USER_COMMANDS = [
+    BotCommand(command="start", description="Start the bot"),
+    BotCommand(command="settings", description="Format and destination"),
+    BotCommand(command="help", description="How to use the bot"),
+]
+ADMIN_COMMANDS = [
+    *USER_COMMANDS,
+    BotCommand(command="allow", description="Give someone access"),
+    BotCommand(command="revoke", description="Take access away"),
+    BotCommand(command="users", description="List who has access"),
+]
 
 
 def create_bot(settings: Settings) -> Bot:
@@ -42,24 +55,26 @@ def build_dispatcher(
         sender=sender,
         download_slots=asyncio.Semaphore(settings.max_parallel_downloads),
     )
-    dispatcher.message.outer_middleware(UserMiddleware())
-    dispatcher.callback_query.outer_middleware(UserMiddleware())
+    # Order matters: users are registered before their access is checked
+    for observer in (dispatcher.message, dispatcher.callback_query):
+        observer.outer_middleware(UserMiddleware())
+        observer.outer_middleware(AccessMiddleware())
     dispatcher.include_router(setup_routers())
     return dispatcher
 
 
-async def configure_bot(bot: Bot) -> None:
+async def configure_bot(bot: Bot, settings: Settings) -> None:
     await bot.set_my_description(
         "Music Assistant Bot: saves audio from YouTube and other sites to Telegram.\n\n"
         "Click /start to begin!"
     )
     await bot.set_my_short_description("Saves audio from YouTube and other sites to Telegram.")
-    await bot.set_my_commands(
-        [
-            BotCommand(command="start", description="Start the bot"),
-            BotCommand(command="help", description="How to use the bot"),
-        ]
-    )
+    await bot.set_my_commands(USER_COMMANDS)
+    for admin_id in settings.admin_ids:
+        try:
+            await bot.set_my_commands(ADMIN_COMMANDS, scope=BotCommandScopeChat(chat_id=admin_id))
+        except TelegramAPIError as e:
+            logger.warning("Couldn't set admin commands for %s (bot not started?): %s", admin_id, e)
 
 
 async def run(settings: Settings, database: Database) -> None:
@@ -86,7 +101,9 @@ async def run(settings: Settings, database: Database) -> None:
         logger.info(
             "Upload mode: %s (up to %d MB)", settings.upload_mode, settings.max_upload_size // MB
         )
-        await configure_bot(bot)
+        if not settings.admin_ids:
+            logger.warning("ADMIN_IDS is empty, so nobody can use the bot")
+        await configure_bot(bot, settings)
         # Polling needs no webhook; keep updates sent while the bot was restarting
         await bot.delete_webhook(drop_pending_updates=False)
         await dispatcher.start_polling(bot)

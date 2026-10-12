@@ -1,8 +1,9 @@
 from enum import StrEnum
 from pathlib import Path
+from typing import Annotated, Any
 
-from pydantic import AliasChoices, Field, SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import AliasChoices, Field, SecretStr, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 MB = 1024 * 1024
 
@@ -31,7 +32,8 @@ class Settings(BaseSettings):
 
     # Telegram
     bot_token: SecretStr = Field(validation_alias=AliasChoices("BOT_API_TOKEN", "BOT_TOKEN"))
-    channel_id: int
+    # Admins always have access and can grant it to others: ADMIN_IDS=111,222
+    admin_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
     api_id: int | None = None
     api_hash: SecretStr | None = None
     local_bot_api_url: str | None = None
@@ -47,6 +49,13 @@ class Settings(BaseSettings):
     max_duration_minutes: int = Field(default=180, ge=1)
 
     log_level: str = "INFO"
+
+    @field_validator("admin_ids", mode="before")
+    @classmethod
+    def split_admin_ids(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return [int(part) for part in value.replace(" ", "").split(",") if part]
+        return value
 
     @property
     def upload_mode(self) -> UploadMode:
