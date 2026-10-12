@@ -32,7 +32,8 @@ FORMAT_DESCRIPTIONS = {
     AudioFormat.MP3: "MP3, plays everywhere (re-encoded at 192 kbps)",
 }
 
-# The only right the bot needs in a channel
+# The only right the bot needs in a channel. Telegram also requires the user to hold
+# every right the bot asks for, so the same rights are requested from the user.
 POST_RIGHTS = ChatAdministratorRights(
     is_anonymous=False,
     can_manage_chat=False,
@@ -124,6 +125,7 @@ async def ask_for_channel(callback: CallbackQuery) -> None:
     picker = KeyboardButtonRequestChat(
         request_id=CHANNEL_REQUEST_ID,
         chat_is_channel=True,
+        user_administrator_rights=POST_RIGHTS,
         bot_administrator_rights=POST_RIGHTS,
         request_title=True,
     )

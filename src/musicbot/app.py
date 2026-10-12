@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 
 from aiogram import Bot, Dispatcher
@@ -7,7 +8,7 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import BotCommand, BotCommandScopeChat
+from aiogram.types import BotCommand, BotCommandScopeChat, ErrorEvent
 
 from musicbot.config import MB, Settings, UploadMode
 from musicbot.db.database import Database
@@ -44,6 +45,20 @@ def create_bot(settings: Settings) -> Bot:
     )
 
 
+async def handle_error(event: ErrorEvent) -> None:
+    """
+    Last resort for exceptions in handlers: log them, and give the user feedback so a
+    pressed button doesn't keep spinning.
+    """
+    logger.error("Failed to handle update %s", event.update.update_id, exc_info=event.exception)
+    text = "Something went wrong. Please try again."
+    with contextlib.suppress(TelegramAPIError):
+        if event.update.callback_query:
+            await event.update.callback_query.answer(text, show_alert=True)
+        elif event.update.message:
+            await event.update.message.answer(text)
+
+
 def build_dispatcher(
     settings: Settings, database: Database, downloader: Downloader, sender: AudioSender
 ) -> Dispatcher:
@@ -59,6 +74,7 @@ def build_dispatcher(
     for observer in (dispatcher.message, dispatcher.callback_query):
         observer.outer_middleware(UserMiddleware())
         observer.outer_middleware(AccessMiddleware())
+    dispatcher.errors.register(handle_error)
     dispatcher.include_router(setup_routers())
     return dispatcher
 
