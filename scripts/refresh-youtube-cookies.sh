@@ -109,14 +109,14 @@ EOF
 }
 
 export_cookies() {
-    local browser tmp_dir exported login_cookies
+    local browser exported login_cookies
     browser=$(ytdlp_browser)
     mkdir -p "$DATA_DIR"
     # yt-dlp first reads the --cookies file if it exists, and rejects an empty one,
     # so export to a new path in a private temporary folder
-    tmp_dir=$(mktemp -d "$DATA_DIR/export.XXXXXX")
-    trap 'rm -rf "$tmp_dir"' EXIT
-    exported="$tmp_dir/cookies.txt"
+    EXPORT_DIR=$(mktemp -d "$DATA_DIR/export.XXXXXX")
+    trap 'rm -rf "$EXPORT_DIR"' EXIT
+    exported="$EXPORT_DIR/cookies.txt"
 
     echo "Exporting cookies..."
     ytdlp --cookies-from-browser "$browser+basictext:$PROFILE_DIR/Default" --cookies "$exported" \
@@ -132,15 +132,19 @@ export_cookies() {
 
 summarize() {
     local count expiry
-    # Netscape format: domain, subdomains, path, secure, expiry, name, value
+    # Netscape format: domain, subdomains, path, secure, expiry, name, value. yt-dlp keeps
+    # Chromium's own expiry times (microseconds since 1601), so convert those to Unix time.
     read -r count expiry < <(awk -F'\t' 'NF >= 7 {
         n++
-        if ($6 ~ /^(LOGIN_INFO|__Secure-3PSID)$/ && $5 > 0 && (min == "" || $5 < min)) min = $5
-    } END { print n + 0, min + 0 }' "$COOKIES")
+        t = $5
+        if (t > 1e12) t = t / 1000000 - 11644473600
+        if ($6 ~ /^(LOGIN_INFO|__Secure-3PSID)$/ && t > 0 && (min == "" || t < min)) min = t
+    } END { printf "%d %d\n", n, min }' "$COOKIES")
 
     echo "$count cookies in $COOKIES"
     if ((expiry > 0)); then
-        echo "The login lasts until $(date -d "@$expiry" '+%Y-%m-%d') at most; YouTube can end it sooner."
+        echo "The login expires on $(date -d "@$expiry" '+%Y-%m-%d') at the latest" \
+            "(in $(((expiry - $(date +%s)) / 86400)) days); YouTube usually ends sessions sooner."
     fi
 }
 
@@ -212,7 +216,7 @@ while (($#)); do
     shift
 done
 
-SERVER="" REMOTE_DIR="" BROWSER="" PROFILE_DIR=""
+SERVER="" REMOTE_DIR="" BROWSER="" PROFILE_DIR="" EXPORT_DIR=""
 # shellcheck source=/dev/null
 [[ -f $CONFIG_FILE ]] && source "$CONFIG_FILE"
 if $reconfigure || [[ -z $SERVER ]]; then
