@@ -28,8 +28,10 @@ Requirements: Docker with the Compose plugin.
    Set `BOT_API_TOKEN` (from [@BotFather](https://t.me/BotFather)) and `ADMIN_IDS`, your
    numeric Telegram user ID. If you don't know it, start the bot without it and send it a
    message: it replies with your ID.
-2. Optional: YouTube cookies help with age-restricted videos and bot checks. Export them in
-   Netscape format and save them as `secrets/cookies.txt` (mounted read-only into the container).
+2. Optional but recommended on cloud servers: YouTube cookies get past its bot checks and
+   age restrictions. Create and upload them with
+   [`scripts/refresh-youtube-cookies.sh`](#refreshing-youtube-cookies), or save a Netscape-format
+   export as `secrets/cookies.txt` yourself (mounted read-only into the container).
 3. Start the bot:
    ```bash
    docker compose up -d --build
@@ -61,6 +63,33 @@ All settings come from environment variables (or `.env`):
 - **Destination:** audio comes back in the chat. To post it to a channel instead, tap
   **Post to a channel** in `/settings` and pick one you manage; Telegram adds the bot there as
   an admin that can post.
+
+## Refreshing YouTube cookies
+YouTube asks cloud servers to "confirm you're not a bot" for some videos; the bot then replies
+that YouTube is blocking the server. Cookies from a signed-in YouTube account fix that, and need
+refreshing when YouTube expires or rotates them. On your own computer (Linux, with Chromium or
+Chrome, plus uv or yt-dlp):
+
+```bash
+scripts/refresh-youtube-cookies.sh
+```
+
+1. The first run asks for the server's SSH host, the bot's folder there, the browser and where to
+   keep its profile, and saves them in `~/.config/musicbot/youtube-cookies.conf`
+   (`--reconfigure` to change them).
+2. A browser window opens with a dedicated profile, kept in `~/.local/share/musicbot/` so later
+   runs are usually already signed in. Sign in (a secondary Google account is safest), play a
+   video, open `https://www.youtube.com/robots.txt` as the only tab, and close the window
+   without signing out. Open that profile only through this script: YouTube rotates the cookies
+   of open sessions, which invalidates the exported copy.
+3. The script exports the cookies with yt-dlp, checks the profile was signed in, and shows when
+   the login expires at the latest.
+4. Only after you confirm, it uploads them to `secrets/cookies.txt` on the server, readable only
+   by the bot's container user, enables `COOKIES_FILE` in the server's `.env`, and restarts the
+   bot if it was running without cookies.
+
+The last export stays in `~/.local/share/musicbot/youtube-cookies.txt`;
+`--upload-only` uploads it again, for example to a second server.
 
 ## Large files
 The cloud Bot API refuses uploads above 50 MB (about 36 minutes of MP3). The bot picks an
