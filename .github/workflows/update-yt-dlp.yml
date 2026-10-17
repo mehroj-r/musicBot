@@ -71,17 +71,16 @@ jobs:
               --body "Locks [yt-dlp $VERSION](https://github.com/yt-dlp/yt-dlp/releases/tag/$VERSION). Opened and merged by the Update yt-dlp workflow once CI passes."
           fi
 
-      # Pull requests opened with GITHUB_TOKEN don't trigger workflows, but dispatching one does.
-      # Its checks run on the pull request's head commit, so they count for the pull request
+      # GitHub holds CI on pull requests opened with GITHUB_TOKEN until someone approves the run.
+      # Only that pull_request run counts as the pull request's checks
       - name: Run CI on the pull request
         if: steps.check.outputs.version
         run: |
           sha=$(git rev-parse HEAD)
-          gh workflow run ci.yml --ref "$BRANCH"
-          # The dispatched run takes a few seconds to show up
+          # The run takes a few seconds to show up
           for _ in $(seq 24); do
-            run=$(gh run list --workflow ci.yml --event workflow_dispatch --commit "$sha" \
-              --json databaseId --jq '.[0].databaseId')
+            run=$(gh run list --workflow ci.yml --event pull_request --commit "$sha" \
+              --json databaseId,conclusion --jq '.[0] | select(.) | "\(.databaseId) \(.conclusion)"')
             [ -n "$run" ] && break
             sleep 5
           done
@@ -89,7 +88,11 @@ jobs:
             echo "CI didn't start on $sha." >&2
             exit 1
           fi
-          gh run watch "$run" --exit-status
+          read -r id conclusion <<< "$run"
+          if [ "$conclusion" = action_required ]; then
+            gh api --method POST "repos/$GH_REPO/actions/runs/$id/approve"
+          fi
+          gh run watch "$id" --exit-status
 
       - name: Merge
         if: steps.check.outputs.version

@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches: [master]
-  # Started by the yt-dlp update, whose pull request and merge don't trigger CI by themselves
+  # Started by the yt-dlp update, whose merge doesn't trigger CI by itself
   workflow_dispatch:
 
 jobs:
