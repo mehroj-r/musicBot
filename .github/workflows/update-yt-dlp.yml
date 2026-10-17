@@ -6,13 +6,23 @@ on:
   workflow_dispatch:
 
 permissions:
-  # Push the updated lock file, then start CI on it
+  # Push the update branch, open and merge its pull request, then start CI
   contents: write
+  pull-requests: write
   actions: write
+
+concurrency:
+  group: update-yt-dlp
+  cancel-in-progress: false
 
 jobs:
   update:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BRANCH: chore/update-yt-dlp
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
 
@@ -39,22 +49,60 @@ jobs:
           VERSION: ${{ steps.check.outputs.version }}
         run: uv lock --upgrade-package "yt-dlp==$VERSION"
 
-      - name: Commit and push
+      # master only takes pull requests that passed CI, so the update goes through one too
+      - name: Open a pull request
         if: steps.check.outputs.version
         env:
           VERSION: ${{ steps.check.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
           git commit -am "chore: update yt-dlp to $VERSION"
-          git push
+          # Replaces the branch of an earlier update that didn't get merged
+          git push --force origin "$BRANCH"
 
-      # Pushes made with GITHUB_TOKEN don't trigger workflows, but dispatching one does;
+          title="chore: update yt-dlp to $VERSION"
+          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')
+          if [ -n "$pr" ]; then
+            gh pr edit "$pr" --title "$title"
+          else
+            gh pr create --base "$GITHUB_REF_NAME" --head "$BRANCH" --title "$title" \
+              --body "Locks [yt-dlp $VERSION](https://github.com/yt-dlp/yt-dlp/releases/tag/$VERSION). Opened and merged by the Update yt-dlp workflow once CI passes."
+          fi
+
+      # GitHub holds CI on pull requests opened with GITHUB_TOKEN until someone approves the run.
+      # Only that pull_request run counts as the pull request's checks
+      - name: Run CI on the pull request
+        if: steps.check.outputs.version
+        run: |
+          sha=$(git rev-parse HEAD)
+          # The run takes a few seconds to show up
+          for _ in $(seq 24); do
+            run=$(gh run list --workflow ci.yml --event pull_request --commit "$sha" \
+              --json databaseId,conclusion --jq '.[0] | select(.) | "\(.databaseId) \(.conclusion)"')
+            [ -n "$run" ] && break
+            sleep 5
+          done
+          if [ -z "$run" ]; then
+            echo "CI didn't start on $sha." >&2
+            exit 1
+          fi
+          read -r id conclusion <<< "$run"
+          if [ "$conclusion" = action_required ]; then
+            gh api --method POST "repos/$GH_REPO/actions/runs/$id/approve"
+          fi
+          gh run watch "$id" --exit-status
+
+      - name: Merge
+        if: steps.check.outputs.version
+        run: gh pr merge "$BRANCH" --squash --match-head-commit "$(git rev-parse HEAD)"
+
+      # The merge, made with GITHUB_TOKEN, doesn't trigger CI on master either;
       # CI passing on master then triggers the deploy
-      - name: Run CI on the update
+      - name: Run CI on the merge
         if: steps.check.outputs.version
         env:
-          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.check.outputs.version }}
         run: |
           gh workflow run ci.yml --ref "$GITHUB_REF_NAME"

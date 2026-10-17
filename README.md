@@ -168,7 +168,9 @@ uv run alembic revision --autogenerate -m "describe the change"
 - **Deploy** (`.github/workflows/deploy.yml`) runs after CI passes on `master`: it pulls on the
   server over SSH, builds the new image, then restarts the containers.
 - **yt-dlp updates** (`.github/workflows/update-yt-dlp.yml`) run daily. When a new yt-dlp is out,
-  the workflow commits the updated `uv.lock` to `master`, which goes through CI and the deploy.
+  the workflow opens a pull request with the updated `uv.lock`, merges it once CI passes, and the
+  merge then goes through CI and the deploy.
+- `master` only takes pull requests whose CI passed, and they are squash-merged.
 
 ## Project Structure
 ```
