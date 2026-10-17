@@ -1,9 +1,16 @@
 # Music Bot (Telegram)
 
-A private Telegram bot that turns links from YouTube, YouTube Music, Yandex Music, SoundCloud,
-Bandcamp and
+[![CI](https://github.com/mehroj-r/music-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/mehroj-r/music-bot/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/)
+[![Telegram bot](https://img.shields.io/badge/Telegram-@MusicAsistentRoBot-26A5E4?logo=telegram)](https://t.me/MusicAsistentRoBot)
+
+A private, self-hosted Telegram bot that turns links from YouTube, YouTube Music, Yandex Music,
+SoundCloud, Bandcamp and
 [other sites supported by yt-dlp](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)
-into tagged audio files, sent back in the chat or posted to the user's channel.
+into tagged audio files, sent back in the chat or posted to the user's channel. The hosted
+instance is [@MusicAsistentRoBot](https://t.me/MusicAsistentRoBot) (access on request), or run
+your own.
 
 ## Features
 - Private: admins grant access by user ID; strangers' requests reach the admins with an Allow button.
@@ -176,3 +183,10 @@ src/musicbot/
   services/        # yt-dlp downloads, artwork and tags, uploads, Yandex Music
 tests/             # pytest suite
 ```
+
+## Contributing
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Please report security
+issues privately as described in [SECURITY.md](SECURITY.md).
+
+## License
+Released under the [MIT License](LICENSE).

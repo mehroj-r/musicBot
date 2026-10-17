@@ -1,0 +1,59 @@
+name: Bug report
+description: Something isn't working as expected.
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Send the bot https://www.youtube.com/watch?v=...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: site
+    attributes:
+      label: Site
+      description: Where the link was from (e.g. YouTube, YouTube Music, Yandex Music, SoundCloud).
+  - type: dropdown
+    id: format
+    attributes:
+      label: Format
+      options:
+        - M4A
+        - MP3
+  - type: dropdown
+    id: upload-mode
+    attributes:
+      label: Upload mode
+      options:
+        - Cloud Bot API (up to 50 MB)
+        - Telethon (API_ID / API_HASH)
+        - Local Bot API server
+  - type: dropdown
+    id: run-mode
+    attributes:
+      label: Run mode
+      options:
+        - Docker Compose
+        - uv (local development)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Remove tokens, cookies and user IDs before pasting.
+      render: shell

@@ -1,0 +1,23 @@
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    # Updated daily by the Update yt-dlp workflow
+    ignore:
+      - dependency-name: yt-dlp
+      - dependency-name: yt-dlp-ejs
+    groups:
+      python-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
